@@ -1,0 +1,12 @@
+# High-risk opt-in: the Docker API can control the entire NAS Docker host.
+# A read-only bind flag does not make Docker API operations read-only.
+services:
+  dashboard:
+    # Synology's socket is normally root-owned. This overrides the non-root
+    # runtime user and therefore intentionally weakens the base hardening.
+    user: "0:0"
+    environment:
+      DOCKER_SOCKET: /var/run/docker.sock
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+

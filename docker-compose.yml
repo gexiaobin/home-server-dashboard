@@ -1,0 +1,48 @@
+services:
+  dashboard:
+    image: ${DASHBOARD_IMAGE:-ghcr.io/gexiaobin/home-server-dashboard:latest}
+    container_name: home-server-dashboard
+    restart: unless-stopped
+    init: true
+    ports:
+      - "${BIND_ADDRESS:-0.0.0.0}:${APP_PORT:-3000}:3000"
+    environment:
+      NODE_ENV: production
+      HOST: 0.0.0.0
+      PORT: 3000
+      DATA_DIR: /app/data
+      HOST_PROC: /host/proc
+      HOST_SYS: /host/sys
+      HOST_STORAGE: /host/storage
+      SERVICE_CHECK_TIMEOUT_MS: ${SERVICE_CHECK_TIMEOUT_MS:-5000}
+      BASIC_AUTH_USERNAME: ${BASIC_AUTH_USERNAME:-}
+      BASIC_AUTH_PASSWORD: ${BASIC_AUTH_PASSWORD:-}
+      TZ: ${TZ:-Asia/Shanghai}
+    volumes:
+      - ${DATA_PATH:-./data}:/app/data
+      - /proc:/host/proc:ro
+      - /sys:/host/sys:ro
+      - ${HOST_STORAGE_PATH:-/volume1}:/host/storage:ro
+    read_only: true
+    tmpfs:
+      - /tmp
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    healthcheck:
+      test:
+        - CMD
+        - node
+        - -e
+        - "fetch('http://127.0.0.1:3000/api/health').then((response) => { if (!response.ok) process.exit(1); }).catch(() => process.exit(1))"
+      interval: 30s
+      timeout: 5s
+      start_period: 15s
+      retries: 3
+    logging:
+      driver: json-file
+      options:
+        max-size: 10m
+        max-file: "3"
+

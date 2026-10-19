@@ -1,0 +1,90 @@
+{
+  "settings": {
+    "title": "HomeLab Console",
+    "location": "Home network",
+    "refreshInterval": 5000
+  },
+  "services": [
+    {
+      "id": "synology-dsm",
+      "name": "Synology DSM",
+      "description": "存储、备份与系统管理",
+      "url": "https://nas.home.arpa:5001",
+      "category": "基础设施",
+      "icon": "server",
+      "favorite": true,
+      "check": { "type": "none" }
+    },
+    {
+      "id": "proxmox",
+      "name": "Proxmox VE",
+      "description": "虚拟机与 LXC 管理",
+      "url": "https://pve.home.arpa:8006",
+      "category": "基础设施",
+      "icon": "boxes",
+      "favorite": true,
+      "check": { "type": "none" }
+    },
+    {
+      "id": "home-assistant",
+      "name": "Home Assistant",
+      "description": "家庭自动化控制中心",
+      "url": "http://ha.home.arpa:8123",
+      "category": "智能家庭",
+      "icon": "house",
+      "favorite": true,
+      "check": { "type": "none" }
+    },
+    {
+      "id": "jellyfin",
+      "name": "Jellyfin",
+      "description": "电影、剧集与音乐媒体库",
+      "url": "http://media.home.arpa:8096",
+      "category": "媒体",
+      "icon": "play",
+      "favorite": false,
+      "check": { "type": "none" }
+    },
+    {
+      "id": "immich",
+      "name": "Immich",
+      "description": "家庭照片与视频备份",
+      "url": "http://photos.home.arpa:2283",
+      "category": "媒体",
+      "icon": "image",
+      "favorite": false,
+      "check": { "type": "none" }
+    },
+    {
+      "id": "adguard",
+      "name": "AdGuard Home",
+      "description": "局域网 DNS 与广告过滤",
+      "url": "http://dns.home.arpa:3000",
+      "category": "网络",
+      "icon": "shield",
+      "favorite": false,
+      "check": { "type": "none" }
+    }
+  ],
+  "topology": {
+    "nodes": [
+      { "id": "internet", "label": "Internet", "type": "internet", "x": 50, "y": 8 },
+      { "id": "gateway", "label": "主路由", "type": "router", "x": 50, "y": 29 },
+      { "id": "nas", "label": "Synology NAS", "type": "nas", "serviceId": "synology-dsm", "x": 25, "y": 55 },
+      { "id": "pve", "label": "虚拟化主机", "type": "server", "serviceId": "proxmox", "x": 72, "y": 55 },
+      { "id": "media", "label": "媒体服务", "type": "container", "serviceId": "jellyfin", "x": 14, "y": 82 },
+      { "id": "photos", "label": "照片服务", "type": "container", "serviceId": "immich", "x": 37, "y": 82 },
+      { "id": "smart-home", "label": "智能家庭 VM", "type": "vm", "serviceId": "home-assistant", "x": 65, "y": 82 },
+      { "id": "dns", "label": "DNS 服务", "type": "container", "serviceId": "adguard", "x": 87, "y": 82 }
+    ],
+    "links": [
+      { "source": "internet", "target": "gateway", "label": "WAN" },
+      { "source": "gateway", "target": "nas", "label": "1 GbE" },
+      { "source": "gateway", "target": "pve", "label": "LAN" },
+      { "source": "nas", "target": "media" },
+      { "source": "nas", "target": "photos" },
+      { "source": "pve", "target": "smart-home" },
+      { "source": "pve", "target": "dns" }
+    ]
+  }
+}

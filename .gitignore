@@ -1,0 +1,12 @@
+node_modules/
+dist/
+data/config.json
+data/*.tmp
+.DS_Store
+*.log
+.env
+.env.local
+.postgres_password_upload
+coverage/
+playwright-report/
+test-results/
