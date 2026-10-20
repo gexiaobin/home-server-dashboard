@@ -1,6 +1,7 @@
 import {
   Activity,
   Boxes,
+  LayoutDashboard,
   LayoutGrid,
   Network,
   PanelLeftClose,
@@ -9,7 +10,7 @@ import {
   X,
 } from 'lucide-react';
 
-export type ViewId = 'services' | 'monitor' | 'topology' | 'settings';
+export type ViewId = 'overview' | 'services' | 'monitor' | 'topology' | 'settings';
 
 interface SidebarProps {
   title: string;
@@ -23,10 +24,11 @@ interface SidebarProps {
 }
 
 const items = [
-  { id: 'services' as const, label: '服务导航', icon: LayoutGrid },
-  { id: 'monitor' as const, label: '系统监控', icon: Activity },
-  { id: 'topology' as const, label: '网络拓扑', icon: Network },
-  { id: 'settings' as const, label: '设置', icon: Settings },
+  { id: 'overview' as const, label: '概览', english: 'Overview', icon: LayoutDashboard },
+  { id: 'services' as const, label: '服务中心', english: 'Services', icon: LayoutGrid },
+  { id: 'monitor' as const, label: '系统监控', english: 'Monitoring', icon: Activity },
+  { id: 'topology' as const, label: '网络拓扑', english: 'Topology', icon: Network },
+  { id: 'settings' as const, label: '系统设置', english: 'Settings', icon: Settings },
 ];
 
 export function Sidebar({
@@ -42,12 +44,12 @@ export function Sidebar({
   return (
     <>
       {open && <button className="sidebar-backdrop" aria-label="关闭菜单" onClick={onClose} />}
-      <aside className={`sidebar ${open ? 'is-open' : ''} ${collapsed ? 'is-collapsed' : ''}`}>
+      <aside className={`sidebar ${open ? 'is-open' : ''} ${collapsed ? 'is-collapsed' : ''}`} aria-label="控制中心侧栏">
         <div className="brand">
-          <div className="brand-mark"><Boxes size={20} strokeWidth={1.8} /></div>
+          <div className="brand-mark"><Boxes size={19} strokeWidth={1.8} /><i /></div>
           <div className="brand-copy">
             <strong>{title}</strong>
-            <span>HOME OPERATIONS</span>
+            <span>HOME CONTROL CENTER</span>
           </div>
           <button className="icon-button sidebar-mobile-close" onClick={onClose} aria-label="关闭菜单">
             <X size={18} />
@@ -55,40 +57,50 @@ export function Sidebar({
         </div>
 
         <nav className="sidebar-nav" aria-label="主导航">
-          <div className="nav-section-label">工作区</div>
-          {items.slice(0, 3).map((item) => {
+          <div className="nav-section-label"><span>WORKSPACE</span><em>01 — 04</em></div>
+          {items.slice(0, 4).map((item, index) => {
             const Icon = item.icon;
             return (
               <button
                 key={item.id}
                 className={`nav-item ${view === item.id ? 'is-active' : ''}`}
+                aria-current={view === item.id ? 'page' : undefined}
                 onClick={() => onNavigate(item.id)}
                 title={collapsed ? item.label : undefined}
               >
                 <Icon size={18} strokeWidth={1.8} />
-                <span>{item.label}</span>
+                <span>{item.label}<small>{item.english}</small></span>
+                <em>{String(index + 1).padStart(2, '0')}</em>
               </button>
             );
           })}
-          <div className="nav-section-label nav-section-spacer">系统</div>
-          {items.slice(3).map((item) => {
+          <div className="nav-section-label nav-section-spacer"><span>SYSTEM</span><em>05</em></div>
+          {items.slice(4).map((item, index) => {
             const Icon = item.icon;
             return (
               <button
                 key={item.id}
                 className={`nav-item ${view === item.id ? 'is-active' : ''}`}
+                aria-current={view === item.id ? 'page' : undefined}
                 onClick={() => onNavigate(item.id)}
                 title={collapsed ? item.label : undefined}
               >
                 <Icon size={18} strokeWidth={1.8} />
-                <span>{item.label}</span>
+                <span>{item.label}<small>{item.english}</small></span>
+                <em>{String(index + 5).padStart(2, '0')}</em>
               </button>
             );
           })}
         </nav>
 
         <div className="sidebar-footer">
-          <div className="connection-state" title={online ? '后端连接正常' : '后端连接中断'}>
+          <div
+            className="connection-state"
+            role="status"
+            aria-live="polite"
+            aria-label={online ? '后端连接正常，实时数据同步中' : '后端连接中断，请检查服务端'}
+            title={online ? '后端连接正常' : '后端连接中断'}
+          >
             <span className={`status-dot ${online ? 'is-up' : 'is-down'}`} />
             <div>
               <strong>{online ? '系统已连接' : '连接已中断'}</strong>

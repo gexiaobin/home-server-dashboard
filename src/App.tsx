@@ -1,21 +1,22 @@
 import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { AlertTriangle, LoaderCircle, Plus } from 'lucide-react';
+import { AlertTriangle, LoaderCircle } from 'lucide-react';
 import { api } from './api';
 import { ServiceDialog } from './components/ServiceDialog';
 import { Sidebar, type ViewId } from './components/Sidebar';
 import { Topbar } from './components/Topbar';
 import type { AppConfig, MetricPoint, Overview, Service } from './types';
+import { OverviewView } from './views/OverviewView';
 import { ServicesView } from './views/ServicesView';
 
 const MonitorView = lazy(() => import('./views/MonitorView').then((module) => ({ default: module.MonitorView })));
 const SettingsView = lazy(() => import('./views/SettingsView').then((module) => ({ default: module.SettingsView })));
 const TopologyView = lazy(() => import('./views/TopologyView').then((module) => ({ default: module.TopologyView })));
 
-const validViews: ViewId[] = ['services', 'monitor', 'topology', 'settings'];
+const validViews: ViewId[] = ['overview', 'services', 'monitor', 'topology', 'settings'];
 
 function viewFromHash(): ViewId {
   const value = window.location.hash.replace(/^#\/?/, '') as ViewId;
-  return validViews.includes(value) ? value : 'services';
+  return validViews.includes(value) ? value : 'overview';
 }
 
 export function App() {
@@ -33,26 +34,32 @@ export function App() {
   const [sidebarCollapsed, setSidebarCollapsed] = useState(() => localStorage.getItem('sidebar-collapsed') === 'true');
   const [dialogOpen, setDialogOpen] = useState(false);
   const [editingService, setEditingService] = useState<Service | null>(null);
+  const overviewRequestInFlight = useRef(false);
   const searchRef = useRef(search);
   searchRef.current = search;
 
   const refreshOverview = useCallback(async (silent = false) => {
+    if (overviewRequestInFlight.current) return;
+    overviewRequestInFlight.current = true;
     if (!silent) setRefreshing(true);
     try {
       const next = await api.getOverview();
       setOverview(next);
       setError('');
       const at = new Date(next.timestamp);
-      setHistory((items) => [...items, {
-        time: at.toLocaleTimeString('zh-CN', { hour12: false, hour: '2-digit', minute: '2-digit', second: '2-digit' }),
-        cpu: next.cpu.usage,
-        memory: next.memory.percent,
-        rx: next.network.rxBytesPerSecond / 1024 / 1024,
-        tx: next.network.txBytesPerSecond / 1024 / 1024,
-      }].slice(-36));
+      if (!Number.isNaN(at.getTime())) {
+        setHistory((items) => [...items, {
+          time: at.toLocaleTimeString('zh-CN', { hour12: false, hour: '2-digit', minute: '2-digit', second: '2-digit' }),
+          cpu: next.cpu.usage,
+          memory: next.memory.percent,
+          rx: next.network.rxBytesPerSecond / 1024 / 1024,
+          tx: next.network.txBytesPerSecond / 1024 / 1024,
+        }].slice(-36));
+      }
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : '无法连接服务端');
     } finally {
+      overviewRequestInFlight.current = false;
       if (!silent) setRefreshing(false);
     }
   }, []);
@@ -93,11 +100,14 @@ export function App() {
         event.preventDefault();
         (document.querySelector('.search-box input') as HTMLInputElement | null)?.focus();
       }
-      if (event.key === 'Escape' && dialogOpen) setDialogOpen(false);
+      if (event.key === 'Escape') {
+        if (dialogOpen) setDialogOpen(false);
+        if (sidebarOpen) setSidebarOpen(false);
+      }
     }
     window.addEventListener('keydown', handleShortcut);
     return () => window.removeEventListener('keydown', handleShortcut);
-  }, [view, dialogOpen]);
+  }, [view, dialogOpen, sidebarOpen]);
 
   useEffect(() => {
     if (!toast) return;
@@ -149,7 +159,16 @@ export function App() {
   }
 
   const categories = useMemo(() => config ? [...new Set(config.services.map((item) => item.category))] : [], [config]);
-  const lastUpdated = overview ? new Date(overview.timestamp).toLocaleTimeString('zh-CN', { hour12: false }) : undefined;
+  const overviewTimestamp = overview ? new Date(overview.timestamp) : null;
+  const lastUpdated = overviewTimestamp && !Number.isNaN(overviewTimestamp.getTime())
+    ? overviewTimestamp.toLocaleString('zh-CN', {
+      month: '2-digit',
+      day: '2-digit',
+      hour: '2-digit',
+      minute: '2-digit',
+      hour12: false,
+    })
+    : undefined;
 
   if (initialLoading) {
     return (
@@ -194,13 +213,22 @@ export function App() {
           view={view}
           search={search}
           loading={refreshing}
+          connected={Boolean(overview) && !error}
           lastUpdated={lastUpdated}
           onSearch={setSearch}
           onRefresh={() => void refreshOverview()}
           onOpenMenu={() => setSidebarOpen(true)}
         />
-        {error && <div className="connection-banner"><AlertTriangle size={15} /><span>{error}，正在显示最近一次数据。</span></div>}
+        {error && (
+          <div className="connection-banner" role="alert">
+            <AlertTriangle size={15} />
+            <span>{error}{overview ? '，正在显示最近一次数据。' : '。'}</span>
+          </div>
+        )}
         <main className={`page-content page-${view}`}>
+          {view === 'overview' && (
+            <OverviewView config={config} overview={overview} onNavigate={navigate} />
+          )}
           {view === 'services' && (
             <ServicesView
               services={config.services}
@@ -217,11 +245,6 @@ export function App() {
             {view === 'settings' && <SettingsView config={config} saving={saving} onSave={saveConfig} />}
           </Suspense>
         </main>
-        {view === 'services' && (
-          <button className="mobile-add-button" onClick={() => { setEditingService(null); setDialogOpen(true); }} aria-label="添加服务">
-            <Plus size={21} />
-          </button>
-        )}
       </div>
       <ServiceDialog
         service={editingService}
