@@ -45,7 +45,7 @@ BASIC_AUTH_PASSWORD=
 
 生产环境建议将镜像改成明确版本，例如 `:1.0.0`，避免 `latest` 自动变化。不要把实际 URI 写入 Compose、`.env`、README 或截图；数据库应使用专用账号，不要长期使用 `postgres` 超级用户。
 
-服务目录会从每个服务的 URL 抓取页面声明的真实 favicon。`SERVICE_ICON_ALLOW_INSECURE_TLS` 应保持默认的 `false`；只有可信家庭内网服务使用自签名或已过期 HTTPS 证书、导致图标无法加载时，才改为 `true` 后重建容器。该设置会对所有服务图标抓取关闭证书校验，不应与公网或不受信任的服务地址一起使用。
+服务目录会从每个服务的内网 `url` 抓取页面声明的真实 favicon。切换到外网模式不会让容器改为访问互联网地址。`SERVICE_ICON_ALLOW_INSECURE_TLS` 应保持默认的 `false`；只有可信家庭内网服务使用自签名或已过期 HTTPS 证书、导致图标无法加载时，才改为 `true` 后重建容器。该设置会对所有服务图标抓取关闭证书校验，不应与公网或不受信任的服务地址一起使用。
 
 ## 3. 目录权限
 
@@ -89,6 +89,10 @@ Destination: http://127.0.0.1:3000
 
 应用也支持可选 Basic Auth：在 `.env` 中同时设置 `BASIC_AUTH_USERNAME` 与 `BASIC_AUTH_PASSWORD` 后重建容器。凭据只有在 HTTPS 下传输才安全，不能用它替代公网场景的成熟身份代理。`/api/health` 不要求登录，以供容器健康检查使用。
 
+每个服务可以同时配置内网 `url` 和可选的互联网 `externalUrl`。顶栏的“内网 / 外网”开关只改变浏览器打开的链接，不会替代 DSM 反向代理、DNS、证书、端口转发或身份认证。外网地址为空时，对应入口会保持禁用，不会回退到内网地址。互联网地址建议使用 HTTPS，且不要在 URL 中嵌入密码或 Token。
+
+切换模式按浏览器和站点来源保存在 `localStorage`，不会写入 PostgreSQL。通过内网 IP 和公网域名访问控制台属于两个不同来源，因此可以各自保留模式。服务图标和未显式设置 `check.url` 的 HTTP 健康检查始终从容器访问内网 `url`，所以还需确保容器能够解析内网 DNS 并访问目标端口。
+
 ## 6. 宿主指标挂载
 
 默认 Compose 使用三个只读挂载：
@@ -131,6 +135,8 @@ docker compose -f docker-compose.yml -f docker-compose.database-file.yml ps
 
 在 Container Manager 中，也可以进入 Project 后重新拉取镜像并重建。升级前记录当前镜像标签；发生问题时，将 `DASHBOARD_IMAGE` 改回旧版本标签后再次部署。
 
+从单一服务地址版本升级时无需修改 Compose、环境变量或 PostgreSQL 表结构。旧配置中的 `url` 会继续作为内网地址使用，应用会兼容缺少 `externalUrl` 的 JSONB 文档。升级后的默认模式是内网；部署完成后可在服务编辑页逐项填写互联网地址。
+
 ## 9. 备份与恢复
 
 页面配置的权威数据源是 PostgreSQL。使用 PostgreSQL 自带备份工具或现有数据库备份任务定期执行 `pg_dump`，同时安全备份 `.env` 和 `secrets/database_url`。`data/config.json` 仅是旧版本迁移来源，不再是 PostgreSQL 模式的权威数据。不要依赖容器可写层保存数据。
@@ -166,12 +172,19 @@ docker compose -f docker-compose.yml -f docker-compose.database-file.yml ps
 ### 页面能打开但服务检查失败
 
 - 状态检查由容器发起，不是由浏览器发起。
+- 未单独填写 HTTP 检测地址时，检查固定使用服务的内网 `url`，不会随顶栏模式切换。
 - 确认容器 DNS 能解析目标主机名，并能访问目标 VLAN 和端口。
 - 自签名 HTTPS、ACL、防火墙或目标服务拒绝请求都可能导致检查失败。
 
+### 外网模式下服务无法打开
+
+- 先在服务编辑页确认已填写完整的 `externalUrl`；未配置时入口会按设计保持禁用。
+- 此切换不会自动创建公网入口。确认 DSM 反向代理、DNS、HTTPS 证书、身份认证和防火墙规则已经独立配置并验证。
+- 当前模式按站点来源保存在浏览器中；通过另一个域名或 IP 打开控制台时需要重新选择。
+
 ### 服务图标没有显示
 
-- 图标由容器根据服务配置中的 URL 获取，先确认容器能解析并访问目标地址。
+- 图标由容器根据服务配置中的内网 `url` 获取，先确认容器能解析并访问目标地址。
 - 默认抓取超时为 5000 毫秒，可通过 `SERVICE_ICON_TIMEOUT_MS` 调整。
 - 可信内网服务使用自签名或已过期证书时，可将 `SERVICE_ICON_ALLOW_INSECURE_TLS` 设为 `true` 后重建；不要为公网或不受信任的服务关闭证书校验。
 

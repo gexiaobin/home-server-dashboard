@@ -17,8 +17,8 @@ async function createTemporaryDirectory() {
   return directory;
 }
 
-function createPool() {
-  let document = null;
+function createPool(initialDocument = null) {
+  let document = structuredClone(initialDocument);
   const query = vi.fn(async (sql, parameters = []) => {
     const statement = sql.replace(/\s+/g, ' ').trim();
     if (statement.startsWith('CREATE TABLE')) {
@@ -78,14 +78,43 @@ describe('PostgresConfigStore', () => {
     const store = createStore(pool, dataDir);
     const input = {
       settings: { title: 'PostgreSQL dashboard', refreshInterval: 10_000 },
-      services: [{ id: 'nas', name: 'NAS', url: 'https://nas.local' }],
+      services: [{
+        id: 'nas',
+        name: 'NAS',
+        url: 'https://nas.local',
+        externalUrl: 'https://nas.example.com',
+      }],
       topology: { nodes: [{ id: 'nas', label: 'NAS' }], links: [] },
     };
 
     const saved = await store.put(input);
     await expect(store.get()).resolves.toEqual(saved);
     expect(pool.readDocument()).toEqual(saved);
-    expect(saved.services[0]).toMatchObject({ category: '其他', check: { type: 'none' } });
+    expect(saved.services[0]).toMatchObject({
+      category: '其他',
+      check: { type: 'none' },
+      externalUrl: 'https://nas.example.com',
+    });
+  });
+
+  it('normalizes legacy PostgreSQL services without rewriting the stored document', async () => {
+    const dataDir = await createTemporaryDirectory();
+    const legacyDocument = {
+      settings: { title: 'Legacy dashboard', refreshInterval: 5000 },
+      services: [{ id: 'nas', name: 'NAS', url: 'https://nas.home.arpa:5001' }],
+      topology: { nodes: [], links: [] },
+    };
+    const pool = createPool(legacyDocument);
+    const store = createStore(pool, dataDir);
+
+    const config = await store.get();
+
+    expect(config.services[0]).toMatchObject({
+      id: 'nas',
+      url: 'https://nas.home.arpa:5001',
+      externalUrl: '',
+    });
+    expect(pool.readDocument()).toEqual(legacyDocument);
   });
 
   it('migrates a legacy config file only when the database row is empty', async () => {
@@ -93,13 +122,14 @@ describe('PostgresConfigStore', () => {
     const pool = createPool();
     await writeFile(path.join(dataDir, 'config.json'), JSON.stringify({
       settings: { title: 'Migrated', refreshInterval: 5000 },
-      services: [],
+      services: [{ id: 'nas', name: 'NAS', url: 'https://nas.home.arpa:5001' }],
       topology: { nodes: [], links: [] },
     }));
 
     const store = createStore(pool, dataDir);
     await expect(store.get()).resolves.toMatchObject({ settings: { title: 'Migrated' } });
     expect(pool.readDocument()).toMatchObject({ settings: { title: 'Migrated' } });
+    expect(pool.readDocument().services[0]).toMatchObject({ externalUrl: '' });
   });
 
   it('rejects invalid configuration before writing to PostgreSQL', async () => {

@@ -4,7 +4,7 @@ import { api } from './api';
 import { ServiceDialog } from './components/ServiceDialog';
 import { Sidebar, type ViewId } from './components/Sidebar';
 import { Topbar } from './components/Topbar';
-import type { AppConfig, MetricPoint, Overview, Service } from './types';
+import type { AppConfig, MetricPoint, NetworkMode, Overview, Service } from './types';
 import { OverviewView } from './views/OverviewView';
 import { ServicesView } from './views/ServicesView';
 
@@ -13,6 +13,15 @@ const SettingsView = lazy(() => import('./views/SettingsView').then((module) => 
 const TopologyView = lazy(() => import('./views/TopologyView').then((module) => ({ default: module.TopologyView })));
 
 const validViews: ViewId[] = ['overview', 'services', 'monitor', 'topology', 'settings'];
+const NETWORK_MODE_STORAGE_KEY = 'service-network-mode';
+
+function storedNetworkMode(): NetworkMode {
+  try {
+    return window.localStorage.getItem(NETWORK_MODE_STORAGE_KEY) === 'external' ? 'external' : 'internal';
+  } catch {
+    return 'internal';
+  }
+}
 
 function viewFromHash(): ViewId {
   const value = window.location.hash.replace(/^#\/?/, '') as ViewId;
@@ -25,6 +34,7 @@ export function App() {
   const [overview, setOverview] = useState<Overview | null>(null);
   const [history, setHistory] = useState<MetricPoint[]>([]);
   const [search, setSearch] = useState('');
+  const [networkMode, setNetworkMode] = useState<NetworkMode>(storedNetworkMode);
   const [initialLoading, setInitialLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [saving, setSaving] = useState(false);
@@ -95,6 +105,15 @@ export function App() {
   }, []);
 
   useEffect(() => {
+    function syncNetworkMode(event: StorageEvent) {
+      if (event.key !== NETWORK_MODE_STORAGE_KEY) return;
+      setNetworkMode(event.newValue === 'external' ? 'external' : 'internal');
+    }
+    window.addEventListener('storage', syncNetworkMode);
+    return () => window.removeEventListener('storage', syncNetworkMode);
+  }, []);
+
+  useEffect(() => {
     function handleShortcut(event: KeyboardEvent) {
       if (event.key === '/' && view === 'services' && !(event.target instanceof HTMLInputElement) && !(event.target instanceof HTMLTextAreaElement)) {
         event.preventDefault();
@@ -119,6 +138,15 @@ export function App() {
     window.location.hash = `/${next}`;
     setView(next);
     setSidebarOpen(false);
+  }
+
+  function changeNetworkMode(next: NetworkMode) {
+    setNetworkMode(next);
+    try {
+      window.localStorage.setItem(NETWORK_MODE_STORAGE_KEY, next);
+    } catch {
+      // The active mode still works for this tab when browser storage is unavailable.
+    }
   }
 
   async function saveConfig(next: AppConfig, message = '设置已保存') {
@@ -215,9 +243,11 @@ export function App() {
           loading={refreshing}
           connected={Boolean(overview) && !error}
           lastUpdated={lastUpdated}
+          networkMode={networkMode}
           onSearch={setSearch}
           onRefresh={() => void refreshOverview()}
           onOpenMenu={() => setSidebarOpen(true)}
+          onNetworkModeChange={changeNetworkMode}
         />
         {error && (
           <div className="connection-banner" role="alert">
@@ -227,13 +257,14 @@ export function App() {
         )}
         <main className={`page-content page-${view}`}>
           {view === 'overview' && (
-            <OverviewView config={config} overview={overview} onNavigate={navigate} />
+            <OverviewView config={config} overview={overview} networkMode={networkMode} onNavigate={navigate} />
           )}
           {view === 'services' && (
             <ServicesView
               services={config.services}
               health={overview?.services || []}
               search={search}
+              networkMode={networkMode}
               onAdd={() => { setEditingService(null); setDialogOpen(true); }}
               onEdit={(service) => { setEditingService(service); setDialogOpen(true); }}
               onToggleFavorite={(service) => void toggleFavorite(service)}
@@ -241,7 +272,7 @@ export function App() {
           )}
           <Suspense fallback={<div className="view-loading"><LoaderCircle size={21} className="spin" /><span>加载工作区</span></div>}>
             {view === 'monitor' && <MonitorView overview={overview} history={history} />}
-            {view === 'topology' && <TopologyView topology={config.topology} services={config.services} health={overview?.services || []} />}
+            {view === 'topology' && <TopologyView topology={config.topology} services={config.services} health={overview?.services || []} networkMode={networkMode} />}
             {view === 'settings' && <SettingsView config={config} saving={saving} onSave={saveConfig} />}
           </Suspense>
         </main>

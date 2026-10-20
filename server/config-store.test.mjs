@@ -52,6 +52,7 @@ describe('ConfigStore', () => {
           id: 'photos',
           name: 'Photos',
           url: 'http://photos.home.arpa',
+          externalUrl: 'https://photos.example.com',
           check: { type: 'http' },
         },
       ],
@@ -83,6 +84,67 @@ describe('ConfigStore', () => {
     });
     expect(reloaded).toEqual(saved);
     expect(onDisk).toEqual(saved);
+  });
+
+  it('normalizes legacy services without an external URL', async () => {
+    const dataDir = await createTemporaryDirectory();
+    await mkdir(dataDir, { recursive: true });
+    await writeFile(path.join(dataDir, 'config.json'), JSON.stringify({
+      services: [{
+        id: 'legacy-nas',
+        name: 'Legacy NAS',
+        url: 'https://nas.home.arpa:5001',
+      }],
+    }), 'utf8');
+    const store = new ConfigStore({
+      dataDir,
+      defaults: DEFAULT_CONFIG,
+      defaultsFile: path.join(dataDir, 'missing-defaults.json'),
+    });
+
+    const config = await store.get();
+
+    expect(config.services[0]).toMatchObject({
+      id: 'legacy-nas',
+      url: 'https://nas.home.arpa:5001',
+      externalUrl: '',
+    });
+  });
+
+  it('accepts an empty external URL and validates non-empty external URLs', async () => {
+    const dataDir = await createTemporaryDirectory();
+    const store = new ConfigStore({
+      dataDir,
+      defaultsFile: path.join(dataDir, 'missing-defaults.json'),
+    });
+
+    const saved = await store.put({
+      services: [{
+        id: 'photos',
+        name: 'Photos',
+        url: 'http://photos.home.arpa',
+        externalUrl: '   ',
+      }],
+    });
+    expect(saved.services[0].externalUrl).toBe('');
+
+    await expect(store.put({
+      services: [{
+        id: 'photos',
+        name: 'Photos',
+        url: 'http://photos.home.arpa',
+        externalUrl: 'file:///etc/passwd',
+      }],
+    })).rejects.toThrow('services[0].externalUrl must use http or https');
+
+    await expect(store.put({
+      services: [{
+        id: 'photos',
+        name: 'Photos',
+        url: 'http://photos.home.arpa',
+        externalUrl: 123,
+      }],
+    })).rejects.toThrow('services[0].externalUrl must be a string');
   });
 
   it('rejects invalid input without creating a config file', async () => {

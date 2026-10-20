@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react';
-import { ExternalLink, Trash2, X } from 'lucide-react';
+import { Globe2, House, Trash2, X } from 'lucide-react';
 import type { Service } from '../types';
 import { getServiceIcon, serviceIconOptions } from './icons';
 
@@ -18,6 +18,7 @@ const blankService: Service = {
   name: '',
   description: '',
   url: '',
+  externalUrl: '',
   category: '其他',
   icon: 'default',
   favorite: false,
@@ -39,7 +40,9 @@ export function ServiceDialog({ service, categories, open, saving, onClose, onSa
 
   useEffect(() => {
     if (open) {
-      setDraft(service ? structuredClone(service) : structuredClone(blankService));
+      setDraft(service
+        ? { ...structuredClone(service), externalUrl: service.externalUrl || '' }
+        : structuredClone(blankService));
       setError('');
     }
   }, [open, service]);
@@ -51,25 +54,38 @@ export function ServiceDialog({ service, categories, open, saving, onClose, onSa
   async function handleSubmit(event: React.FormEvent) {
     event.preventDefault();
     if (!draft.name.trim() || !draft.url.trim()) {
-      setError('名称和访问地址不能为空。');
+      setError('名称和内网地址不能为空。');
       return;
     }
     try {
       const url = new URL(draft.url);
       if (!['http:', 'https:'].includes(url.protocol)) throw new Error();
     } catch {
-      setError('访问地址必须是完整的 http:// 或 https:// 地址。');
+      setError('内网地址必须是完整的 http:// 或 https:// 地址。');
       return;
     }
+    if (draft.externalUrl.trim()) {
+      try {
+        const url = new URL(draft.externalUrl);
+        if (!['http:', 'https:'].includes(url.protocol)) throw new Error();
+      } catch {
+        setError('互联网地址必须是完整的 http:// 或 https:// 地址。');
+        return;
+      }
+    }
+
+    const checkUrl = draft.check.type === 'http' ? draft.check.url?.trim() : undefined;
 
     const next = {
       ...draft,
       id: draft.id || makeId(draft.name),
       name: draft.name.trim(),
       description: draft.description.trim(),
+      url: draft.url.trim(),
+      externalUrl: draft.externalUrl.trim(),
       category: draft.category.trim() || '其他',
       check: draft.check.type === 'http'
-        ? { type: 'http' as const, url: draft.check.url?.trim() || draft.url.trim() }
+        ? { type: 'http' as const, ...(checkUrl ? { url: checkUrl } : {}) }
         : draft.check.type === 'tcp'
           ? { type: 'tcp' as const, host: draft.check.host?.trim(), port: Number(draft.check.port) }
           : { type: 'none' as const },
@@ -111,13 +127,24 @@ export function ServiceDialog({ service, categories, open, saving, onClose, onSa
               />
             </label>
             <label className="field field-span-2">
-              <span>访问地址</span>
+              <span>内网地址</span>
               <div className="input-with-icon">
-                <ExternalLink size={15} />
+                <House size={15} />
                 <input
                   value={draft.url}
                   onChange={(event) => setDraft({ ...draft, url: event.target.value })}
                   placeholder="https://vault.home.arpa"
+                />
+              </div>
+            </label>
+            <label className="field field-span-2">
+              <span>互联网地址（可选）</span>
+              <div className="input-with-icon">
+                <Globe2 size={15} />
+                <input
+                  value={draft.externalUrl}
+                  onChange={(event) => setDraft({ ...draft, externalUrl: event.target.value })}
+                  placeholder="https://vault.example.com"
                 />
               </div>
             </label>
@@ -173,7 +200,7 @@ export function ServiceDialog({ service, categories, open, saving, onClose, onSa
                 <input
                   value={draft.check.url || ''}
                   onChange={(event) => setDraft({ ...draft, check: { type: 'http', url: event.target.value } })}
-                  placeholder={draft.url || '留空时使用访问地址'}
+                  placeholder={draft.url || '留空时使用内网地址'}
                 />
               </label>
             )}

@@ -12,12 +12,14 @@ import {
 import datacenterImage from '../assets/datacenter.jpg';
 import { getServiceIcon } from '../components/icons';
 import { formatRate, formatUptime, statusLabel } from '../lib/format';
-import type { AppConfig, Overview, ServiceHealth } from '../types';
+import { getServiceHost, getServiceUrl } from '../lib/service-url';
+import type { AppConfig, NetworkMode, Overview, ServiceHealth } from '../types';
 import type { ViewId } from '../components/Sidebar';
 
 interface OverviewViewProps {
   config: AppConfig;
   overview: Overview | null;
+  networkMode: NetworkMode;
   onNavigate: (view: ViewId) => void;
 }
 
@@ -25,15 +27,7 @@ function healthByService(health: ServiceHealth[]) {
   return new Map(health.map((item) => [item.id, item]));
 }
 
-function serviceHost(url: string) {
-  try {
-    return new URL(url).host;
-  } catch {
-    return url;
-  }
-}
-
-export function OverviewView({ config, overview, onNavigate }: OverviewViewProps) {
+export function OverviewView({ config, overview, networkMode, onNavigate }: OverviewViewProps) {
   const serviceIds = new Set(config.services.map((service) => service.id));
   const currentHealth = overview?.services.filter((item) => serviceIds.has(item.id)) ?? [];
   const statusById = healthByService(currentHealth);
@@ -95,6 +89,8 @@ export function OverviewView({ config, overview, onNavigate }: OverviewViewProps
             const Icon = getServiceIcon(service.icon);
             const status = statusById.get(service.id);
             const state = status?.status ?? 'unknown';
+            const activeUrl = getServiceUrl(service, networkMode);
+            const activeHost = getServiceHost(service, networkMode) || '未配置互联网地址';
             return (
               <article className={`launch-card is-${state}`} key={service.id}>
                 <div className="launch-card-top">
@@ -107,11 +103,17 @@ export function OverviewView({ config, overview, onNavigate }: OverviewViewProps
                 </div>
                 <div className="launch-card-meta">
                   <span>{service.category}</span>
-                  <code>{serviceHost(service.url)}</code>
+                  <code title={activeHost}>{activeHost}</code>
                 </div>
-                <a href={service.url} target="_blank" rel="noreferrer" aria-label={`打开 ${service.name}`}>
-                  打开服务 <ArrowUpRight size={15} />
-                </a>
+                {activeUrl ? (
+                  <a className="launch-open" href={activeUrl} target="_blank" rel="noreferrer" aria-label={`打开 ${service.name}`}>
+                    打开服务 <ArrowUpRight size={15} />
+                  </a>
+                ) : (
+                  <button className="launch-open is-disabled" type="button" disabled title="未配置互联网地址">
+                    未配置互联网地址 <ArrowUpRight size={15} />
+                  </button>
+                )}
               </article>
             );
           })}

@@ -218,11 +218,19 @@ describe('createServiceIconFetcher', () => {
   it('deduplicates concurrent work and keys the cache by id plus URL', async () => {
     const resolver = vi.fn(async () => ({ body: PNG, contentType: 'image/png', etag: '"png"' }));
     const fetchIcon = createServiceIconFetcher({ resolver });
-    const service = { id: 'downloads', url: 'http://apps.example.test:8080' };
+    const service = {
+      id: 'downloads',
+      url: 'http://apps.example.test:8080',
+      externalUrl: 'https://apps.example.test',
+    };
 
     const [first, second] = await Promise.all([fetchIcon(service), fetchIcon(service)]);
     expect(first).toBe(second);
     await fetchIcon(service);
+    expect(resolver).toHaveBeenCalledTimes(1);
+    expect(resolver).toHaveBeenCalledWith(new URL(service.url).toString(), expect.any(Object));
+
+    await fetchIcon({ ...service, externalUrl: 'https://other.example.test' });
     expect(resolver).toHaveBeenCalledTimes(1);
 
     await fetchIcon({ ...service, url: 'http://apps.example.test:8081' });

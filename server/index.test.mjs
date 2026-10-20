@@ -109,6 +109,7 @@ describe('checkService', () => {
     const result = await checkService({
       id: 'photos',
       url: 'http://photos.home.arpa',
+      externalUrl: 'https://photos.example.com',
       check: { type: 'http' },
     }, {
       fetchImpl,
@@ -124,6 +125,19 @@ describe('checkService', () => {
       message: 'HTTP 204',
     });
     expect(fetchImpl.mock.calls[0][0]).toEqual(new URL('http://photos.home.arpa'));
+  });
+
+  it('uses an explicit HTTP probe URL instead of either navigation URL', async () => {
+    const fetchImpl = vi.fn(async () => ({ status: 200, body: null }));
+
+    await checkService({
+      id: 'photos',
+      url: 'http://photos.home.arpa',
+      externalUrl: 'https://photos.example.com',
+      check: { type: 'http', url: 'http://health.home.arpa/ready' },
+    }, { fetchImpl });
+
+    expect(fetchImpl.mock.calls[0][0]).toEqual(new URL('http://health.home.arpa/ready'));
   });
 
   it('turns failed HTTP and TCP probes into down status responses', async () => {

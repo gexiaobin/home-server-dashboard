@@ -91,6 +91,14 @@ export function validateConfig(config) {
 
       requireString(service.name, `services[${index}].name`);
       requireHttpUrl(service.url, `services[${index}].url`);
+      if (service.externalUrl !== undefined) {
+        if (typeof service.externalUrl !== 'string') {
+          throw new ConfigValidationError(`services[${index}].externalUrl must be a string`);
+        }
+        if (service.externalUrl.trim() !== '') {
+          requireHttpUrl(service.externalUrl, `services[${index}].externalUrl`);
+        }
+      }
       if (service.description !== undefined && typeof service.description !== 'string') {
         throw new ConfigValidationError(`services[${index}].description must be a string`);
       }
@@ -180,6 +188,7 @@ export function normalizeConfig(defaults, config) {
       favorite: false,
       check: { type: 'none' },
       ...service,
+      externalUrl: service.externalUrl?.trim() || '',
     })),
     topology: {
       ...(defaults.topology ?? {}),

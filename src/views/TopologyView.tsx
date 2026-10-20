@@ -8,14 +8,16 @@ import {
   Plus,
   X,
 } from 'lucide-react';
-import type { AppConfig, Service, ServiceHealth, TopologyNode } from '../types';
+import type { AppConfig, NetworkMode, Service, ServiceHealth, TopologyNode } from '../types';
 import { getNodeIcon } from '../components/icons';
 import { statusLabel } from '../lib/format';
+import { getServiceUrl } from '../lib/service-url';
 
 interface TopologyViewProps {
   topology: AppConfig['topology'];
   services: Service[];
   health: ServiceHealth[];
+  networkMode: NetworkMode;
 }
 
 function nodeStatus(node: TopologyNode, statusMap: Map<string, ServiceHealth>) {
@@ -23,7 +25,7 @@ function nodeStatus(node: TopologyNode, statusMap: Map<string, ServiceHealth>) {
   return statusMap.get(node.serviceId)?.status || 'unknown';
 }
 
-export function TopologyView({ topology, services, health }: TopologyViewProps) {
+export function TopologyView({ topology, services, health, networkMode }: TopologyViewProps) {
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [zoom, setZoom] = useState(1);
   const viewportRef = useRef<HTMLDivElement>(null);
@@ -32,6 +34,7 @@ export function TopologyView({ topology, services, health }: TopologyViewProps) 
   const nodeMap = useMemo(() => new Map(topology.nodes.map((item) => [item.id, item])), [topology.nodes]);
   const selectedNode = selectedId ? nodeMap.get(selectedId) : undefined;
   const selectedService = selectedNode?.serviceId ? serviceMap.get(selectedNode.serviceId) : undefined;
+  const selectedServiceUrl = selectedService ? getServiceUrl(selectedService, networkMode) : null;
   const selectedHealth = selectedNode?.serviceId ? statusMap.get(selectedNode.serviceId) : undefined;
 
   const centerView = useCallback(() => {
@@ -138,9 +141,15 @@ export function TopologyView({ topology, services, health }: TopologyViewProps) 
                 <span>关联服务</span>
                 <strong>{selectedService.name}</strong>
                 <p>{selectedService.description}</p>
-                <a className="button button-secondary" href={selectedService.url} target="_blank" rel="noreferrer">
-                  <ExternalLink size={15} /> 打开服务
-                </a>
+                {selectedServiceUrl ? (
+                  <a className="button button-secondary" href={selectedServiceUrl} target="_blank" rel="noreferrer">
+                    <ExternalLink size={15} /> 打开服务
+                  </a>
+                ) : (
+                  <button className="button button-secondary" type="button" disabled title="未配置互联网地址">
+                    <ExternalLink size={15} /> 未配置互联网地址
+                  </button>
+                )}
               </div>
             )}
           </aside>

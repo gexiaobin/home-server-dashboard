@@ -1,4 +1,5 @@
 export type ServiceStatus = 'up' | 'down' | 'unknown' | 'checking';
+export type NetworkMode = 'internal' | 'external';
 
 export interface ServiceCheck {
   type: 'http' | 'tcp' | 'none';
@@ -12,6 +13,7 @@ export interface Service {
   name: string;
   description: string;
   url: string;
+  externalUrl: string;
   category: string;
   icon: string;
   favorite: boolean;

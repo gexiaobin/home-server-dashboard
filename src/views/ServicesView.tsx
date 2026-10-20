@@ -2,36 +2,20 @@ import { Clock3, ExternalLink, Pencil, Plus, Server, Star } from 'lucide-react';
 import { useMemo, useState } from 'react';
 import { ServiceAppIcon } from '../components/ServiceAppIcon';
 import { statusLabel } from '../lib/format';
-import type { Service, ServiceHealth, ServiceStatus } from '../types';
+import { getServiceHost, getServiceUrl } from '../lib/service-url';
+import type { NetworkMode, Service, ServiceHealth, ServiceStatus } from '../types';
 
 interface ServicesViewProps {
   services: Service[];
   health: ServiceHealth[];
   search: string;
+  networkMode: NetworkMode;
   onAdd: () => void;
   onEdit: (service: Service) => void;
   onToggleFavorite: (service: Service) => void;
 }
 
 type HealthFilter = 'all' | ServiceStatus;
-
-function getServiceHost(service: Service): string {
-  const endpoint = service.url || service.check.url;
-
-  if (endpoint) {
-    try {
-      return new URL(endpoint).host;
-    } catch {
-      // Keep checking the structured probe target when the launch URL is relative.
-    }
-  }
-
-  if (service.check.host) {
-    return service.check.port ? `${service.check.host}:${service.check.port}` : service.check.host;
-  }
-
-  return endpoint || '--';
-}
 
 function formatCheckedAt(checkedAt?: string | null): string {
   if (!checkedAt) return '尚未检测';
@@ -51,17 +35,20 @@ function formatCheckedAt(checkedAt?: string | null): string {
 function ServiceCard({
   service,
   status,
+  networkMode,
   onEdit,
   onToggleFavorite,
 }: {
   service: Service;
   status?: ServiceHealth;
+  networkMode: NetworkMode;
   onEdit: () => void;
   onToggleFavorite: () => void;
 }) {
   const currentStatus = status?.status || 'unknown';
   const checkedAt = formatCheckedAt(status?.checkedAt);
-  const host = getServiceHost(service);
+  const activeUrl = getServiceUrl(service, networkMode);
+  const host = getServiceHost(service, networkMode) || '未配置互联网地址';
 
   return (
     <article className="service-card service-pod">
@@ -99,7 +86,7 @@ function ServiceCard({
 
       <dl className="service-meta-list">
         <div>
-          <dt>主机</dt>
+          <dt>{networkMode === 'internal' ? '内网地址' : '互联网地址'}</dt>
           <dd title={host}>{host}</dd>
         </div>
         <div>
@@ -114,22 +101,34 @@ function ServiceCard({
           <span>{statusLabel(currentStatus)}</span>
           {status?.latency != null && <span className="latency">{Math.round(status.latency)} ms</span>}
         </div>
-        <a
-          className="open-service"
-          href={service.url}
-          target="_blank"
-          rel="noreferrer"
-          aria-label={`打开 ${service.name}`}
-          title={`打开 ${service.name}`}
-        >
-          <ExternalLink size={15} />
-        </a>
+        {activeUrl ? (
+          <a
+            className="open-service"
+            href={activeUrl}
+            target="_blank"
+            rel="noreferrer"
+            aria-label={`打开 ${service.name}`}
+            title={`打开 ${service.name}`}
+          >
+            <ExternalLink size={15} />
+          </a>
+        ) : (
+          <button
+            className="open-service is-disabled"
+            type="button"
+            disabled
+            aria-label={`${service.name} 未配置互联网地址`}
+            title="未配置互联网地址"
+          >
+            <ExternalLink size={15} />
+          </button>
+        )}
       </div>
     </article>
   );
 }
 
-export function ServicesView({ services, health, search, onAdd, onEdit, onToggleFavorite }: ServicesViewProps) {
+export function ServicesView({ services, health, search, networkMode, onAdd, onEdit, onToggleFavorite }: ServicesViewProps) {
   const [selectedCategory, setSelectedCategory] = useState('all');
   const [healthFilter, setHealthFilter] = useState<HealthFilter>('all');
   const [favoritesOnly, setFavoritesOnly] = useState(false);
@@ -151,6 +150,7 @@ export function ServicesView({ services, health, search, onAdd, onEdit, onToggle
       service.description,
       service.category,
       service.url,
+      service.externalUrl,
       service.check.host,
     ].some((value) => value?.toLocaleLowerCase('zh-CN').includes(normalizedSearch));
 
@@ -251,6 +251,7 @@ export function ServicesView({ services, health, search, onAdd, onEdit, onToggle
                 key={service.id}
                 service={service}
                 status={statusById.get(service.id)}
+                networkMode={networkMode}
                 onEdit={() => onEdit(service)}
                 onToggleFavorite={() => onToggleFavorite(service)}
               />

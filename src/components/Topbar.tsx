@@ -1,4 +1,5 @@
-import { ChevronRight, Menu, RefreshCw, Search, ShieldCheck } from 'lucide-react';
+import { ChevronRight, Globe2, House, Menu, RefreshCw, Search, ShieldCheck } from 'lucide-react';
+import type { NetworkMode } from '../types';
 import type { ViewId } from './Sidebar';
 
 interface TopbarProps {
@@ -6,8 +7,10 @@ interface TopbarProps {
   search: string;
   loading: boolean;
   connected: boolean;
+  networkMode: NetworkMode;
   lastUpdated?: string;
   onSearch: (value: string) => void;
+  onNetworkModeChange: (mode: NetworkMode) => void;
   onRefresh: () => void;
   onOpenMenu: () => void;
 }
@@ -20,7 +23,18 @@ const pageMeta: Record<ViewId, { title: string; subtitle: string }> = {
   settings: { title: '设置', subtitle: '工作区与数据管理' },
 };
 
-export function Topbar({ view, search, loading, connected, lastUpdated, onSearch, onRefresh, onOpenMenu }: TopbarProps) {
+export function Topbar({
+  view,
+  search,
+  loading,
+  connected,
+  networkMode,
+  lastUpdated,
+  onSearch,
+  onNetworkModeChange,
+  onRefresh,
+  onOpenMenu,
+}: TopbarProps) {
   const meta = pageMeta[view];
   return (
     <header className="topbar">
@@ -45,6 +59,28 @@ export function Topbar({ view, search, loading, connected, lastUpdated, onSearch
             />
           </label>
         )}
+        <div className="network-mode-switch" role="group" aria-label="访问网络">
+          <button
+            className={networkMode === 'internal' ? 'is-active' : ''}
+            type="button"
+            aria-pressed={networkMode === 'internal'}
+            title="使用内网地址"
+            onClick={() => onNetworkModeChange('internal')}
+          >
+            <House size={14} />
+            <span>内网</span>
+          </button>
+          <button
+            className={networkMode === 'external' ? 'is-active' : ''}
+            type="button"
+            aria-pressed={networkMode === 'external'}
+            title="使用互联网地址"
+            onClick={() => onNetworkModeChange('external')}
+          >
+            <Globe2 size={14} />
+            <span>外网</span>
+          </button>
+        </div>
         <span className={`live-source ${connected ? '' : 'is-stale'}`}><i className="live-pulse" /> {connected ? 'LIVE DATA' : 'DATA STALE'}</span>
         <span className="readonly-badge"><ShieldCheck size={13} /> HOME SERVER</span>
         <div className="refresh-meta">
