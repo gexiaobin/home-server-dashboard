@@ -1,24 +1,27 @@
 // @vitest-environment jsdom
 
-import { fireEvent, render } from '@testing-library/react';
+import { act, fireEvent, render } from '@testing-library/react';
 import '@testing-library/jest-dom/vitest';
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import { ServiceAppIcon } from './ServiceAppIcon';
 
 const service = {
   id: 'home-assistant',
-  name: 'Home Assistant',
-  url: 'http://ha.home.arpa:8123/lovelace',
+  name: 'qBittorrent',
+  url: 'http://192.168.123.8:8080/#/login',
   icon: 'house',
 };
 
 describe('ServiceAppIcon', () => {
-  it('shows a bundled brand icon and hides the fallback after it loads', () => {
+  it('loads the icon through the service API instead of matching the service name or id', () => {
     const { container } = render(<ServiceAppIcon service={service} />);
     const image = container.querySelector('img');
     const fallback = container.querySelector('svg');
 
-    expect(image).toHaveAttribute('src', '/service-icons/home-assistant.svg');
+    expect(image).toHaveAttribute(
+      'src',
+      '/api/services/home-assistant/icon',
+    );
     expect(fallback).not.toHaveClass('is-hidden');
 
     fireEvent.load(image as HTMLImageElement);
@@ -26,24 +29,38 @@ describe('ServiceAppIcon', () => {
     expect(fallback).toHaveClass('is-hidden');
   });
 
-  it('tries the service favicon before falling back to the Lucide icon', () => {
+  it('falls back to the configured Lucide icon when discovery fails', () => {
     const { container } = render(<ServiceAppIcon service={service} />);
-    let image = container.querySelector('img') as HTMLImageElement;
 
-    fireEvent.error(image);
-    image = container.querySelector('img') as HTMLImageElement;
-    expect(image).toHaveAttribute('src', 'http://ha.home.arpa:8123/favicon.ico');
-
-    fireEvent.error(image);
+    fireEvent.error(container.querySelector('img') as HTMLImageElement);
     expect(container.querySelector('img')).toBeNull();
     expect(container.querySelector('svg')).toBeInTheDocument();
+  });
+
+  it('retries one transient failure after the server negative cache expires', () => {
+    vi.useFakeTimers();
+    try {
+      const { container } = render(<ServiceAppIcon service={service} />);
+      fireEvent.error(container.querySelector('img') as HTMLImageElement);
+
+      act(() => vi.advanceTimersByTime(60_000));
+      expect(container.querySelector('img')).toHaveAttribute(
+        'src',
+        '/api/services/home-assistant/icon',
+      );
+
+      fireEvent.error(container.querySelector('img') as HTMLImageElement);
+      act(() => vi.advanceTimersByTime(60_000));
+      expect(container.querySelector('img')).toBeNull();
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it('retries icon discovery after the service URL changes', () => {
     const unknownService = {
       ...service,
       id: 'custom-service',
-      name: 'Custom Service',
       url: 'http://old.example.test/app',
     };
     const { container, rerender } = render(<ServiceAppIcon service={unknownService} />);
@@ -52,6 +69,16 @@ describe('ServiceAppIcon', () => {
     expect(container.querySelector('img')).toBeNull();
 
     rerender(<ServiceAppIcon service={{ ...unknownService, url: 'https://new.example.test/app' }} />);
-    expect(container.querySelector('img')).toHaveAttribute('src', 'https://new.example.test/favicon.ico');
+    expect(container.querySelector('img')).toHaveAttribute(
+      'src',
+      '/api/services/custom-service/icon',
+    );
+
+    fireEvent.load(container.querySelector('img') as HTMLImageElement);
+    rerender(<ServiceAppIcon service={unknownService} />);
+    expect(container.querySelector('img')).toHaveAttribute(
+      'src',
+      '/api/services/custom-service/icon',
+    );
   });
 });

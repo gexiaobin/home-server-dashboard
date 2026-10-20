@@ -20,6 +20,8 @@
 | `HOST_STORAGE_PATH` | `/volume1` | 用于容量统计的宿主存储路径，只读挂载 |
 | `TZ` | `Asia/Shanghai` | 容器时区 |
 | `SERVICE_CHECK_TIMEOUT_MS` | `5000` | HTTP/TCP 探测超时，单位毫秒，必须为正整数 |
+| `SERVICE_ICON_TIMEOUT_MS` | `5000` | 发现并抓取单个服务真实图标的总超时，单位毫秒，必须为正整数 |
+| `SERVICE_ICON_ALLOW_INSECURE_TLS` | `false` | 是否仅为服务图标抓取跳过 HTTPS 证书校验；只能设为 `true` 或 `false` |
 | `BASIC_AUTH_USERNAME` | 空 | 可选 Basic Auth 用户名；必须与密码同时设置 |
 | `BASIC_AUTH_PASSWORD` | 空 | 可选 Basic Auth 密码；必须与用户名同时设置 |
 
@@ -40,6 +42,8 @@
 推荐使用 `docker-compose.database-file.yml`，把宿主秘密文件只读挂载到 `/run/secrets/database_url`。该文件只包含一行 URI，无引号、无变量名，并应限制为仅管理员可读。应用不会记录连接串；数据库不可用时 `/api/health` 返回 `503`。
 
 启用 Basic Auth 后，除 `/api/health` 外的页面和 API 都需要登录。Basic Auth 仅编码凭据而不加密传输，因此必须同时使用 HTTPS。如果密码包含 Compose 插值字符（例如 `$`），请按 Compose `.env` 语法使用单引号或正确转义。
+
+服务目录中的图标由 Express 根据数据库内每个服务的 `url` 访问目标页面，并解析页面声明的 favicon；浏览器不会直接访问第三方图标地址。`SERVICE_ICON_ALLOW_INSECURE_TLS` 默认必须保持 `false`。只有目标是可信家庭内网服务，并且该服务确实使用自签名或已过期证书时，才可设为 `true`；这会关闭所有服务图标抓取请求的 HTTPS 证书校验，因此不适合公网或不受信任的目标。该选项不影响页面自身的 HTTPS，也不改变 HTTP/TCP 状态检查设置。
 
 ## 应用配置结构
 

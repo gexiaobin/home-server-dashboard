@@ -1,24 +1,38 @@
 import { useEffect, useState } from 'react';
-import { getServiceIconSources } from '../lib/service-icons';
+import { getServiceIconUrl } from '../lib/service-icons';
 import type { Service } from '../types';
 import { getServiceIcon } from './icons';
 
 interface ServiceAppIconProps {
-  service: Pick<Service, 'id' | 'name' | 'url' | 'icon'>;
+  service: Pick<Service, 'id' | 'url' | 'icon'>;
 }
 
 export function ServiceAppIcon({ service }: ServiceAppIconProps) {
-  const FallbackIcon = getServiceIcon(service.icon);
-  const sources = getServiceIconSources(service);
-  const [failedSources, setFailedSources] = useState<string[]>([]);
-  const [loadedSource, setLoadedSource] = useState<string | null>(null);
-  const source = sources.find((candidate) => !failedSources.includes(candidate)) ?? null;
-  const imageLoaded = source !== null && loadedSource === source;
+  const sourceKey = `${service.id}\n${service.url}`;
+
+  return (
+    <ServiceAppIconSource
+      key={sourceKey}
+      source={getServiceIconUrl(service)}
+      fallbackIcon={service.icon}
+    />
+  );
+}
+
+function ServiceAppIconSource({ source, fallbackIcon }: { source: string; fallbackIcon: string }) {
+  const FallbackIcon = getServiceIcon(fallbackIcon);
+  const [imageFailed, setImageFailed] = useState(false);
+  const [imageLoaded, setImageLoaded] = useState(false);
+  const [retryCount, setRetryCount] = useState(0);
 
   useEffect(() => {
-    setFailedSources([]);
-    setLoadedSource(null);
-  }, [service.id, service.name, service.url]);
+    if (!imageFailed || retryCount >= 1) return undefined;
+    const retryTimer = window.setTimeout(() => {
+      setRetryCount((current) => current + 1);
+      setImageFailed(false);
+    }, 60_000);
+    return () => window.clearTimeout(retryTimer);
+  }, [imageFailed, retryCount]);
 
   return (
     <span className="service-icon service-app-icon" aria-hidden="true">
@@ -27,17 +41,17 @@ export function ServiceAppIcon({ service }: ServiceAppIconProps) {
         size={20}
         strokeWidth={1.7}
       />
-      {source && (
+      {!imageFailed && (
         <img
           className={`service-app-icon-image ${imageLoaded ? 'is-loaded' : ''}`}
           src={source}
           alt=""
           decoding="async"
           referrerPolicy="no-referrer"
-          onLoad={() => setLoadedSource(source)}
+          onLoad={() => setImageLoaded(true)}
           onError={() => {
-            setLoadedSource(null);
-            setFailedSources((current) => current.includes(source) ? current : [...current, source]);
+            setImageLoaded(false);
+            setImageFailed(true);
           }}
         />
       )}

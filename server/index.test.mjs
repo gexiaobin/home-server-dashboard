@@ -3,6 +3,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { checkService, createApp, createConfigStore } from './index.mjs';
 
 const servers = [];
+const iconBytes = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
 
 const configFixture = {
   settings: {
@@ -43,6 +44,11 @@ function createDependencies(overrides = {}) {
       latency: 8,
       checkedAt: '2026-10-19T12:00:00.000Z',
       message: 'HTTP 200',
+    })),
+    serviceIconFetcher: vi.fn(async () => ({
+      body: iconBytes,
+      contentType: 'image/png',
+      etag: '"fixture-icon"',
     })),
     dockerClient: vi.fn(async () => ([{
       id: 'container-1',
@@ -254,6 +260,49 @@ describe('createApp', () => {
     expect(response.status).toBe(404);
     await expect(readJson(response)).resolves.toEqual({ error: 'Service not found' });
     expect(dependencies.serviceChecker).not.toHaveBeenCalled();
+  });
+
+  it('proxies the configured service icon with hardened response headers', async () => {
+    const dependencies = createDependencies();
+    const baseUrl = await serve(createApp(dependencies));
+
+    const response = await fetch(`${baseUrl}/api/services/photos/icon?url=http://attacker.invalid/icon`);
+
+    expect(response.status).toBe(200);
+    expect(Buffer.from(await response.arrayBuffer())).toEqual(iconBytes);
+    expect(response.headers.get('content-type')).toBe('image/png');
+    expect(response.headers.get('cache-control')).toBe('private, no-cache');
+    expect(response.headers.get('x-content-type-options')).toBe('nosniff');
+    expect(response.headers.get('cross-origin-resource-policy')).toBe('same-origin');
+    expect(dependencies.serviceIconFetcher).toHaveBeenCalledWith(configFixture.services[0]);
+
+    const cachedResponse = await fetch(`${baseUrl}/api/services/photos/icon`, {
+      headers: { 'if-none-match': '"fixture-icon"' },
+    });
+    expect(cachedResponse.status).toBe(304);
+  });
+
+  it('does not invoke icon discovery for an unknown service', async () => {
+    const dependencies = createDependencies();
+    const baseUrl = await serve(createApp(dependencies));
+
+    const response = await fetch(`${baseUrl}/api/services/missing/icon`);
+
+    expect(response.status).toBe(404);
+    expect(dependencies.serviceIconFetcher).not.toHaveBeenCalled();
+  });
+
+  it('returns 404 without exposing upstream icon errors', async () => {
+    const dependencies = createDependencies({
+      serviceIconFetcher: vi.fn(async () => { throw new Error('certificate expired at private host'); }),
+    });
+    const baseUrl = await serve(createApp(dependencies));
+
+    const response = await fetch(`${baseUrl}/api/services/photos/icon`);
+
+    expect(response.status).toBe(404);
+    expect(await response.text()).toBe('');
+    expect(dependencies.logger.warn).toHaveBeenCalledWith('Unable to resolve icon for service photos');
   });
 
   it('aggregates injected metrics, service checks, and Docker data for overview', async () => {

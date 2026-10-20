@@ -14,6 +14,7 @@ import {
   PostgresConfigStore,
 } from './config-store.mjs';
 import { MetricsCollector } from './metrics.mjs';
+import { createServiceIconFetcher } from './service-icon.mjs';
 
 const SERVER_DIR = path.dirname(fileURLToPath(import.meta.url));
 const PROJECT_DIR = path.resolve(SERVER_DIR, '..');
@@ -242,6 +243,14 @@ function parsePositiveInteger(value, fallback, name) {
   return parsed;
 }
 
+function parseBoolean(value, fallback, name) {
+  if (value === undefined || value === '') return fallback;
+  const normalized = String(value).toLowerCase();
+  if (normalized === 'true') return true;
+  if (normalized === 'false') return false;
+  throw new Error(`${name} must be true or false`);
+}
+
 export function createConfigStore(env = process.env, { poolErrorHandler } = {}) {
   const backend = String(env.STORAGE_BACKEND || 'auto').toLowerCase();
   if (!['auto', 'file', 'postgresql'].includes(backend)) {
@@ -292,6 +301,14 @@ export function createApp({
   basicAuth,
   logger = console,
   serviceTimeoutMs = parsePositiveInteger(env.SERVICE_CHECK_TIMEOUT_MS, 5000, 'SERVICE_CHECK_TIMEOUT_MS'),
+  serviceIconFetcher = createServiceIconFetcher({
+    allowInsecureTls: parseBoolean(
+      env.SERVICE_ICON_ALLOW_INSECURE_TLS,
+      false,
+      'SERVICE_ICON_ALLOW_INSECURE_TLS',
+    ),
+    timeoutMs: parsePositiveInteger(env.SERVICE_ICON_TIMEOUT_MS, 5000, 'SERVICE_ICON_TIMEOUT_MS'),
+  }),
   distDir = path.join(PROJECT_DIR, 'dist'),
   serveStatic = true,
 } = {}) {
@@ -346,6 +363,38 @@ export function createApp({
   });
   app.post('/api/services/:id/check', handleServiceCheck);
   app.get('/api/services/:id/check', handleServiceCheck);
+
+  app.get('/api/services/:id/icon', asyncRoute(async (request, response) => {
+    const config = await configStore.get();
+    const service = config.services.find((item) => item.id === request.params.id);
+    if (!service) {
+      response.status(404).end();
+      return;
+    }
+
+    let icon;
+    try {
+      icon = await serviceIconFetcher(service);
+    } catch {
+      logger.warn?.(`Unable to resolve icon for service ${service.id}`);
+      response.status(404).end();
+      return;
+    }
+
+    response.set({
+      'Cache-Control': 'private, no-cache',
+      'Content-Security-Policy': "sandbox; default-src 'none'; img-src data:; style-src 'unsafe-inline'",
+      'Content-Type': icon.contentType,
+      'Cross-Origin-Resource-Policy': 'same-origin',
+      ETag: icon.etag,
+      'X-Content-Type-Options': 'nosniff',
+    });
+    if (request.get('if-none-match') === icon.etag) {
+      response.status(304).end();
+      return;
+    }
+    response.send(icon.body);
+  }));
 
   app.get('/api/overview', asyncRoute(async (_request, response) => {
     const [config, metrics] = await Promise.all([
