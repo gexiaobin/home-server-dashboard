@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   ExternalLink,
   Focus,
@@ -26,12 +26,32 @@ function nodeStatus(node: TopologyNode, statusMap: Map<string, ServiceHealth>) {
 export function TopologyView({ topology, services, health }: TopologyViewProps) {
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [zoom, setZoom] = useState(1);
+  const viewportRef = useRef<HTMLDivElement>(null);
   const statusMap = useMemo(() => new Map(health.map((item) => [item.id, item])), [health]);
   const serviceMap = useMemo(() => new Map(services.map((item) => [item.id, item])), [services]);
   const nodeMap = useMemo(() => new Map(topology.nodes.map((item) => [item.id, item])), [topology.nodes]);
   const selectedNode = selectedId ? nodeMap.get(selectedId) : undefined;
   const selectedService = selectedNode?.serviceId ? serviceMap.get(selectedNode.serviceId) : undefined;
   const selectedHealth = selectedNode?.serviceId ? statusMap.get(selectedNode.serviceId) : undefined;
+
+  const centerView = useCallback(() => {
+    setZoom(1);
+    window.requestAnimationFrame(() => {
+      const viewport = viewportRef.current;
+      if (!viewport) return;
+      viewport.scrollLeft = Math.max(0, (viewport.scrollWidth - viewport.clientWidth) / 2);
+      viewport.scrollTop = 0;
+    });
+  }, []);
+
+  useEffect(() => {
+    const viewport = viewportRef.current;
+    if (!viewport || !window.matchMedia('(max-width: 700px)').matches) return;
+    centerView();
+    const observer = new ResizeObserver(centerView);
+    observer.observe(viewport);
+    return () => observer.disconnect();
+  }, [centerView, topology.nodes.length]);
 
   return (
     <div className="topology-view">
@@ -49,12 +69,12 @@ export function TopologyView({ topology, services, health }: TopologyViewProps) 
           <button className="icon-button" onClick={() => setZoom((v) => Math.max(0.8, v - 0.1))} aria-label="缩小" title="缩小"><Minus size={16} /></button>
           <span>{Math.round(zoom * 100)}%</span>
           <button className="icon-button" onClick={() => setZoom((v) => Math.min(1.3, v + 0.1))} aria-label="放大" title="放大"><Plus size={16} /></button>
-          <button className="icon-button" onClick={() => setZoom(1)} aria-label="适配视图" title="适配视图"><Focus size={16} /></button>
+          <button className="icon-button" onClick={centerView} aria-label="居中视图" title="居中视图"><Focus size={16} /></button>
         </div>
       </div>
 
       <div className={`topology-workspace ${selectedNode ? 'has-inspector' : ''}`}>
-        <div className="topology-viewport">
+        <div className="topology-viewport" ref={viewportRef} aria-label="网络拓扑画布">
           <div className="topology-grid" style={{ transform: `scale(${zoom})` }}>
             <svg className="topology-links" viewBox="0 0 1000 600" preserveAspectRatio="none" aria-hidden="true">
               {topology.links.map((link, index) => {
