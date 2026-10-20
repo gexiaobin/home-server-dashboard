@@ -8,7 +8,7 @@
 - 状态检查：支持 HTTP、TCP 和不探测三种模式。
 - 主机概览：CPU、内存、磁盘、网络与温度指标。
 - 网络拓扑：维护路由器、NAS、虚拟机、容器与连接关系。
-- 持久化配置：页面修改写入数据目录，容器升级后继续保留。
+- PostgreSQL 持久化：页面修改通过原子 JSONB upsert 保存，容器升级后继续保留。
 - 群晖友好：提供 Container Manager Compose、多架构 GHCR 镜像和部署说明。
 
 ## 架构
@@ -17,7 +17,7 @@
 Browser
   | HTTP/HTTPS
   v
-Express :3000  ----  /app/data/config.json
+Express :3000  ----  PostgreSQL / JSONB
   | serves API + built React assets
   +---- /host/proc       (read-only host metrics)
   +---- /host/sys        (read-only host metrics)
@@ -49,18 +49,23 @@ npm start
 
 ## Docker 快速启动
 
-正式部署推荐使用版本标签替代 `latest`，便于回滚。
+正式部署使用 PostgreSQL，推荐通过只读秘密文件提供连接串，并使用版本标签替代 `latest` 以便回滚：
 
 ```bash
 cp .env.example .env
-docker compose pull
-docker compose up -d
-docker compose ps
+mkdir -p secrets data
+# 使用本地编辑器或秘密管理工具写入 secrets/database_url，并限制为 chmod 600。
+docker compose -f docker-compose.yml -f docker-compose.database-file.yml pull
+docker compose -f docker-compose.yml -f docker-compose.database-file.yml up -d
+docker compose -f docker-compose.yml -f docker-compose.database-file.yml ps
 ```
+
+秘密文件内容是一行 PostgreSQL URI，例如 `postgresql://dashboard:password@postgres:5432/home_server_dashboard`。也可在 `.env` 中设置 `DATABASE_URL`，但环境变量会显示在容器检查信息中，安全性低于只读文件。不要同时设置 `DATABASE_URL` 与 `DATABASE_URL_FILE`。
 
 打开 `http://NAS-IP:3000`。默认 Compose 会：
 
-- 将配置写入 `/volume1/docker/home-server-dashboard/data`。
+- 将页面配置写入 PostgreSQL 表 `home_server_dashboard_config`。
+- 首次连接空表时，如 `data/config.json` 存在，会一次性导入旧配置。
 - 只读挂载宿主 `/proc`、`/sys` 与 `/volume1` 以采集指标。
 - 使用只读容器文件系统、移除 Linux capabilities，并限制容器日志大小。
 - 不挂载 Docker Socket。
@@ -100,7 +105,8 @@ docker compose \
 
 ## 安全说明
 
-- `.env`、`data/` 和真实家庭网络信息不得提交到公共仓库。
+- `.env`、`secrets/`、`data/` 和真实家庭网络信息不得提交到公共仓库。
+- PostgreSQL 应使用专用数据库账号，只授予应用表所需权限；不要长期使用 `postgres` 超级用户。
 - 当前应用本身不应被视为互联网边界认证服务。对外访问时，请在 DSM 反向代理前增加身份验证、访问控制或仅通过可信 VPN 访问。
 - 内置 Basic Auth 适合家庭内网的基础保护，不替代 HTTPS、多因素认证或成熟的身份代理；`/api/health` 为容器探针保持公开。
 - HTTP/TCP 状态检查由服务端发起，配置编辑权限等同于允许访问家庭内网探测能力。

@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
-import { checkService, createApp } from './index.mjs';
+import { checkService, createApp, createConfigStore } from './index.mjs';
 
 const servers = [];
 
@@ -168,6 +168,28 @@ describe('createApp', () => {
     expect(dependencies.configStore.get).toHaveBeenCalledTimes(1);
   });
 
+  it('reports storage readiness failures without exposing driver errors', async () => {
+    const dependencies = createDependencies({
+      configStore: {
+        backend: 'postgresql',
+        healthCheck: vi.fn(async () => {
+          throw Object.assign(new Error('password authentication failed for secret-user'), { code: '28P01' });
+        }),
+        get: vi.fn(async () => configFixture),
+        put: vi.fn(async (config) => config),
+      },
+    });
+    const baseUrl = await serve(createApp(dependencies));
+
+    const response = await fetch(`${baseUrl}/api/health`);
+    expect(response.status).toBe(503);
+    await expect(readJson(response)).resolves.toMatchObject({
+      status: 'error',
+      storage: 'postgresql',
+    });
+    expect(dependencies.logger.warn).toHaveBeenCalledWith('Storage readiness check failed');
+  });
+
   it('reads and updates config through the injected store', async () => {
     const dependencies = createDependencies();
     const baseUrl = await serve(createApp(dependencies));
@@ -254,5 +276,21 @@ describe('createApp', () => {
       { timeoutMs: 321 },
     );
     expect(dependencies.dockerClient).toHaveBeenCalledWith('/fixture/docker.sock');
+  });
+});
+
+describe('createConfigStore', () => {
+  it('keeps file storage available for local development', () => {
+    expect(createConfigStore({ STORAGE_BACKEND: 'file', DATA_DIR: '/tmp/dashboard-test' }).backend).toBe('file');
+  });
+
+  it('requires a connection source for explicit PostgreSQL storage', () => {
+    expect(() => createConfigStore({ STORAGE_BACKEND: 'postgresql' }))
+      .toThrow('PostgreSQL storage requires DATABASE_URL or DATABASE_URL_FILE');
+  });
+
+  it('selects PostgreSQL when a secret file is configured', () => {
+    const store = createConfigStore({ DATABASE_URL_FILE: '/run/secrets/database_url' });
+    expect(store.backend).toBe('postgresql');
   });
 });

@@ -8,7 +8,11 @@ import { fileURLToPath, pathToFileURL } from 'node:url';
 
 import express from 'express';
 
-import { ConfigStore, ConfigValidationError } from './config-store.mjs';
+import {
+  ConfigStore,
+  ConfigValidationError,
+  PostgresConfigStore,
+} from './config-store.mjs';
 import { MetricsCollector } from './metrics.mjs';
 
 const SERVER_DIR = path.dirname(fileURLToPath(import.meta.url));
@@ -238,11 +242,45 @@ function parsePositiveInteger(value, fallback, name) {
   return parsed;
 }
 
+export function createConfigStore(env = process.env, { poolErrorHandler } = {}) {
+  const backend = String(env.STORAGE_BACKEND || 'auto').toLowerCase();
+  if (!['auto', 'file', 'postgresql'].includes(backend)) {
+    throw new Error('STORAGE_BACKEND must be auto, file, or postgresql');
+  }
+
+  const connectionString = env.DATABASE_URL || null;
+  const connectionStringFile = env.DATABASE_URL_FILE || null;
+  if (connectionString && connectionStringFile) {
+    throw new Error('Set only one of DATABASE_URL or DATABASE_URL_FILE');
+  }
+  if (backend === 'file' && (connectionString || connectionStringFile)) {
+    throw new Error('Database connection settings cannot be used with STORAGE_BACKEND=file');
+  }
+
+  const commonOptions = {
+    dataDir: env.DATA_DIR || path.join(PROJECT_DIR, 'data'),
+  };
+  if (connectionString || connectionStringFile || backend === 'postgresql') {
+    return new PostgresConfigStore({
+      ...commonOptions,
+      connectionString,
+      connectionStringFile,
+      maxConnections: parsePositiveInteger(env.DATABASE_POOL_MAX, 5, 'DATABASE_POOL_MAX'),
+      connectionTimeoutMs: parsePositiveInteger(
+        env.DATABASE_CONNECT_TIMEOUT_MS,
+        5000,
+        'DATABASE_CONNECT_TIMEOUT_MS',
+      ),
+      queryTimeoutMs: parsePositiveInteger(env.DATABASE_QUERY_TIMEOUT_MS, 5000, 'DATABASE_QUERY_TIMEOUT_MS'),
+      poolErrorHandler,
+    });
+  }
+  return new ConfigStore(commonOptions);
+}
+
 export function createApp({
   env = process.env,
-  configStore = new ConfigStore({
-    dataDir: env.DATA_DIR || path.join(PROJECT_DIR, 'data'),
-  }),
+  configStore = createConfigStore(env),
   metricsCollector = new MetricsCollector({
     procRoot: env.HOST_PROC,
     sysRoot: env.HOST_SYS,
@@ -267,14 +305,25 @@ export function createApp({
     next();
   });
 
-  app.get('/api/health', (_request, response) => {
-    response.json({
-      status: 'ok',
-      version: env.npm_package_version || '1.0.0',
-      uptime: process.uptime(),
-      timestamp: new Date().toISOString(),
-    });
-  });
+  app.get('/api/health', asyncRoute(async (_request, response) => {
+    try {
+      await configStore.healthCheck?.();
+      response.json({
+        status: 'ok',
+        storage: configStore.backend || 'injected',
+        version: env.npm_package_version || '1.0.0',
+        uptime: process.uptime(),
+        timestamp: new Date().toISOString(),
+      });
+    } catch {
+      logger.warn?.('Storage readiness check failed');
+      response.status(503).json({
+        status: 'error',
+        storage: configStore.backend || 'injected',
+        timestamp: new Date().toISOString(),
+      });
+    }
+  }));
 
   app.use(createBasicAuthMiddleware(credentials));
 
@@ -356,7 +405,8 @@ export function createApp({
       ? 400
       : (isJsonSyntaxError ? 400 : (error.statusCode || error.status || 500));
     if (status >= 500) {
-      logger.error?.(error);
+      const suffix = error?.code ? ` (${error.code})` : '';
+      logger.error?.(`Request failed${suffix}`);
     }
     response.status(status).json({
       error: isJsonSyntaxError ? 'Invalid JSON body' : (status >= 500 ? 'Internal server error' : error.message),
@@ -369,15 +419,39 @@ export function createApp({
 export async function startServer({ env = process.env, logger = console } = {}) {
   const port = parsePositiveInteger(env.PORT, 3000, 'PORT');
   const host = env.HOST || '0.0.0.0';
-  const app = createApp({ env, logger });
+  const configStore = createConfigStore(env, {
+    poolErrorHandler: (error) => {
+      const suffix = error?.code ? ` (${error.code})` : '';
+      logger.error?.(`PostgreSQL pool error${suffix}`);
+    },
+  });
+  try {
+    await configStore.healthCheck?.();
+  } catch (error) {
+    await configStore.close?.().catch(() => {});
+    throw error;
+  }
+  const app = createApp({ env, logger, configStore });
   const server = app.listen(port, host, () => {
     logger.log?.(`Home Server Dashboard listening on http://${host}:${port}`);
   });
 
+  let shuttingDown = false;
   const shutdown = (signal) => {
+    if (shuttingDown) {
+      return;
+    }
+    shuttingDown = true;
     logger.log?.(`Received ${signal}; shutting down`);
-    server.close((error) => {
-      process.exitCode = error ? 1 : 0;
+    server.close(async (serverError) => {
+      let closeError = null;
+      try {
+        await configStore.close?.();
+      } catch {
+        closeError = new Error('Unable to close storage cleanly');
+        logger.error?.(closeError.message);
+      }
+      process.exitCode = serverError || closeError ? 1 : 0;
     });
   };
   process.once('SIGTERM', () => shutdown('SIGTERM'));
@@ -388,7 +462,8 @@ export async function startServer({ env = process.env, logger = console } = {}) 
 const entryPoint = process.argv[1] ? pathToFileURL(path.resolve(process.argv[1])).href : null;
 if (entryPoint === import.meta.url) {
   startServer().catch((error) => {
-    console.error(error);
+    const suffix = error?.code ? ` (${error.code})` : '';
+    console.error(`Unable to start Home Server Dashboard${suffix}`);
     process.exitCode = 1;
   });
 }

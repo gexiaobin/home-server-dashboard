@@ -6,7 +6,8 @@
 
 - DSM 已安装 Container Manager。
 - NAS 可以访问 `ghcr.io`，或已经通过其他方式把镜像同步到可访问的镜像仓库。
-- 有一个用于持久化的目录，例如 `/volume1/docker/home-server-dashboard/data`。
+- 有一个应用可访问的 PostgreSQL 实例和专用低权限账号。
+- 有一个应用目录，例如 `/volume1/docker/home-server-dashboard`。
 - 端口 `3000` 未被占用；若已占用，在 `.env` 中更改 `APP_PORT`。
 
 中国大陆网络环境中直接拉取 GHCR 可能不稳定。可以使用可信的私有镜像代理或现有镜像同步流程，但不要使用来源不明的公共代理传输私有镜像或凭据。
@@ -17,15 +18,21 @@
 
 ```text
 /volume1/docker/home-server-dashboard/
-`-- data/
+|-- data/
+`-- secrets/
+    `-- database_url
 ```
 
-将仓库中的 `docker-compose.yml` 和 `.env.example` 放入 `home-server-dashboard` 目录，并把 `.env.example` 复制为 `.env`。至少检查这些值：
+将仓库中的 `docker-compose.yml`、`docker-compose.database-file.yml` 和 `.env.example` 放入 `home-server-dashboard` 目录，并把 `.env.example` 复制为 `.env`。`secrets/database_url` 只写一行 PostgreSQL URI，不加引号。至少检查这些值：
 
 ```dotenv
 DASHBOARD_IMAGE=ghcr.io/gexiaobin/home-server-dashboard:latest
 BIND_ADDRESS=0.0.0.0
 APP_PORT=3000
+STORAGE_BACKEND=postgresql
+DATABASE_URL=
+DATABASE_URL_FILE=
+DATABASE_URL_FILE_PATH=/volume1/docker/home-server-dashboard/secrets/database_url
 DATA_PATH=/volume1/docker/home-server-dashboard/data
 HOST_STORAGE_PATH=/volume1
 TZ=Asia/Shanghai
@@ -34,14 +41,17 @@ BASIC_AUTH_USERNAME=
 BASIC_AUTH_PASSWORD=
 ```
 
-生产环境建议将镜像改成明确版本，例如 `:1.0.0`，避免 `latest` 自动变化。
+生产环境建议将镜像改成明确版本，例如 `:1.0.0`，避免 `latest` 自动变化。不要把实际 URI 写入 Compose、`.env`、README 或截图；数据库应使用专用账号，不要长期使用 `postgres` 超级用户。
 
 ## 3. 目录权限
 
-镜像以内置 `node` 用户（UID/GID 1000）运行。先通过 File Station 确认 Container Manager 对数据目录有读写权限。如果日志出现 `EACCES` 或 `permission denied`，可通过 DSM ACL 给相应用户读写权限；启用 SSH 的环境也可以仅针对该数据目录修正属主：
+镜像以内置 `node` 用户（UID/GID 1000）运行。秘密文件只需容器可读，建议权限为 `0400` 或 `0440`；`data` 目录只在旧 JSON 迁移或文件模式下需要写权限。如果日志出现 `EACCES` 或 `permission denied`，只修正应用自己的目录，不要修改共享目录根权限：
 
 ```bash
 sudo chown -R 1000:1000 /volume1/docker/home-server-dashboard/data
+sudo chown -R 1000:1000 /volume1/docker/home-server-dashboard/secrets
+sudo chmod 700 /volume1/docker/home-server-dashboard/secrets
+sudo chmod 400 /volume1/docker/home-server-dashboard/secrets/database_url
 ```
 
 不要对 `/volume1` 或共享文件夹根目录递归执行 `chown`。
@@ -51,10 +61,12 @@ sudo chown -R 1000:1000 /volume1/docker/home-server-dashboard/data
 1. 打开 **Container Manager > Project**。
 2. 点击 **Create**，项目名填写 `home-server-dashboard`。
 3. Path 选择 `/volume1/docker/home-server-dashboard`。
-4. Source 选择已有的 `docker-compose.yml`。
-5. 检查端口、目录和环境变量，完成创建并启动项目。
+4. 若界面只接受一个 Compose 文件，把 `docker-compose.database-file.yml` 中的 `environment` 与 `volumes` 条目合并到主文件；SSH 部署则可同时传入两个 `-f` 文件。
+5. Source 选择最终的 Compose 配置，检查端口、秘密文件挂载和环境变量，完成创建并启动项目。
 6. 在 Container 页面确认 `home-server-dashboard` 状态为 Healthy。
-7. 浏览器打开 `http://NAS-IP:3000`，再访问 `http://NAS-IP:3000/api/health` 验证 API。
+7. 浏览器打开 `http://NAS-IP:3000`，再访问 `http://NAS-IP:3000/api/health`；返回 `status: ok` 与 `storage: postgresql` 才表示数据库读写链路就绪。
+
+应用会自动执行幂等的 `CREATE TABLE IF NOT EXISTS`。运行账号至少需要目标数据库与 schema 的连接、使用和建表权限，以及应用表的 `SELECT`、`INSERT`、`UPDATE` 权限。生产环境可先用迁移账号建表，再收紧运行账号权限。若 PostgreSQL 在另一个 Container Manager Project 中，确认它监听 NAS 局域网地址或让两个项目加入同一个受控 Docker 网络。
 
 官方 Project 功能支持以 Compose 文件创建、启动、停止、重建和清理项目：[Synology Container Manager Project](https://kb.synology.com/en-global/DSM/help/ContainerManager/docker_project?version=7)。
 
@@ -109,22 +121,22 @@ docker compose \
 ```bash
 cd /volume1/docker/home-server-dashboard
 docker compose pull
-docker compose up -d
-docker compose ps
+docker compose -f docker-compose.yml -f docker-compose.database-file.yml up -d
+docker compose -f docker-compose.yml -f docker-compose.database-file.yml ps
 ```
 
 在 Container Manager 中，也可以进入 Project 后重新拉取镜像并重建。升级前记录当前镜像标签；发生问题时，将 `DASHBOARD_IMAGE` 改回旧版本标签后再次部署。
 
 ## 9. 备份与恢复
 
-需要备份的是 `.env` 和 `data/`，其中 `data/config.json` 保存实际配置。可使用 Hyper Backup 定期备份 `/volume1/docker/home-server-dashboard`。不要依赖容器可写层保存数据。
+页面配置的权威数据源是 PostgreSQL。使用 PostgreSQL 自带备份工具或现有数据库备份任务定期执行 `pg_dump`，同时安全备份 `.env` 和 `secrets/database_url`。`data/config.json` 仅是旧版本迁移来源，不再是 PostgreSQL 模式的权威数据。不要依赖容器可写层保存数据。
 
 恢复时：
 
 1. 停止 Project。
-2. 恢复 `.env` 与 `data/`。
-3. 检查目录权限。
-4. 重新启动 Project 并访问 `/api/health`。
+2. 恢复 PostgreSQL 数据库，再恢复 `.env` 和秘密文件。
+3. 检查秘密文件权限与数据库网络访问控制。
+4. 重新启动 Project，并确认 `/api/health` 返回 `storage: postgresql`。
 
 群晖官方也建议备份映射到 NAS 的持久化目录：[How do I back up Docker containers?](https://kb.synology.com/en-global/DSM/tutorial/How_do_I_back_up_Docker_containers)。
 
@@ -139,8 +151,8 @@ docker compose ps
 ### 容器不断重启
 
 - 在 Container Manager 查看日志。
-- 检查 `/app/data` 对 UID 1000 是否可写。
-- 确认健康接口 `/api/health` 可访问。
+- 确认数据库 URI、`pg_hba.conf`、`listen_addresses`、DSM 防火墙和秘密文件权限。
+- 确认健康接口 `/api/health` 可访问且返回 `storage: postgresql`。
 
 ### 没有温度或 Docker 数据
 

@@ -6,6 +6,7 @@ data/*.tmp
 *.log
 .env
 .env.local
+secrets/
 .postgres_password_upload
 coverage/
 playwright-report/

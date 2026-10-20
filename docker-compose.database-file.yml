@@ -1,0 +1,7 @@
+services:
+  dashboard:
+    environment:
+      DATABASE_URL: ""
+      DATABASE_URL_FILE: /run/secrets/database_url
+    volumes:
+      - ${DATABASE_URL_FILE_PATH:-./secrets/database_url}:/run/secrets/database_url:ro

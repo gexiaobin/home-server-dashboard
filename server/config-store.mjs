@@ -1,6 +1,8 @@
 import { promises as fs } from 'node:fs';
 import path from 'node:path';
 
+import { Pool } from 'pg';
+
 export const DEFAULT_CONFIG = Object.freeze({
   settings: Object.freeze({
     title: 'Home Server',
@@ -163,7 +165,7 @@ export function validateConfig(config) {
   return config;
 }
 
-function mergeWithDefaults(defaults, config) {
+export function normalizeConfig(defaults, config) {
   return {
     ...clone(defaults),
     ...clone(config),
@@ -206,6 +208,7 @@ export class ConfigStore {
     this.defaults = defaults;
     this.defaultsFile = defaultsFile;
     this.fs = fsImpl;
+    this.backend = 'file';
     this.writeQueue = Promise.resolve();
     this.loadedDefaults = null;
   }
@@ -240,10 +243,10 @@ export class ConfigStore {
         throw new Error(`Stored config is not valid JSON: ${error.message}`);
       }
       validateConfig(parsed);
-      return mergeWithDefaults(defaults, parsed);
+      return normalizeConfig(defaults, parsed);
     } catch (error) {
       if (error.code === 'ENOENT') {
-        return mergeWithDefaults(defaults, {});
+        return normalizeConfig(defaults, {});
       }
       throw error;
     }
@@ -252,7 +255,7 @@ export class ConfigStore {
   async put(config) {
     validateConfig(config);
     const defaults = await this.getDefaults();
-    const normalized = mergeWithDefaults(defaults, config);
+    const normalized = normalizeConfig(defaults, config);
 
     const write = async () => {
       await this.fs.mkdir(this.dataDir, { recursive: true });
@@ -273,5 +276,162 @@ export class ConfigStore {
     const result = this.writeQueue.then(write, write);
     this.writeQueue = result.then(() => undefined, () => undefined);
     return result;
+  }
+}
+
+const CONFIG_TABLE = 'home_server_dashboard_config';
+
+export class PostgresConfigStore extends ConfigStore {
+  constructor({
+    connectionString,
+    connectionStringFile,
+    pool,
+    maxConnections = 5,
+    connectionTimeoutMs = 5000,
+    queryTimeoutMs = 5000,
+    poolErrorHandler = () => {},
+    ...configStoreOptions
+  } = {}) {
+    super(configStoreOptions);
+    if (!pool && !connectionString && !connectionStringFile) {
+      throw new Error('PostgreSQL storage requires DATABASE_URL or DATABASE_URL_FILE');
+    }
+    if (connectionString && connectionStringFile) {
+      throw new Error('Set only one of DATABASE_URL or DATABASE_URL_FILE');
+    }
+
+    this.backend = 'postgresql';
+    this.connectionString = connectionString;
+    this.connectionStringFile = connectionStringFile;
+    this.pool = pool || null;
+    this.ownsPool = !pool;
+    this.maxConnections = maxConnections;
+    this.connectionTimeoutMs = connectionTimeoutMs;
+    this.queryTimeoutMs = queryTimeoutMs;
+    this.poolErrorHandler = poolErrorHandler;
+    this.poolPromise = null;
+    this.schemaPromise = null;
+  }
+
+  async getPool() {
+    if (this.pool) {
+      return this.pool;
+    }
+    if (!this.poolPromise) {
+      this.poolPromise = (async () => {
+        const connectionString = this.connectionStringFile
+          ? (await this.fs.readFile(this.connectionStringFile, 'utf8')).trim()
+          : this.connectionString;
+        if (!connectionString) {
+          throw new Error('PostgreSQL connection string is empty');
+        }
+        this.pool = new Pool({
+          connectionString,
+          max: this.maxConnections,
+          connectionTimeoutMillis: this.connectionTimeoutMs,
+          query_timeout: this.queryTimeoutMs,
+          statement_timeout: this.queryTimeoutMs,
+          application_name: 'home-server-dashboard',
+        });
+        this.pool.on('error', this.poolErrorHandler);
+        return this.pool;
+      })().catch((error) => {
+        this.poolPromise = null;
+        throw error;
+      });
+    }
+    return this.poolPromise;
+  }
+
+  async initialize() {
+    if (!this.schemaPromise) {
+      this.schemaPromise = (async () => {
+        const pool = await this.getPool();
+        await pool.query(`
+          CREATE TABLE IF NOT EXISTS ${CONFIG_TABLE} (
+            id smallint PRIMARY KEY CHECK (id = 1),
+            document jsonb NOT NULL,
+            updated_at timestamptz NOT NULL DEFAULT NOW()
+          )
+        `);
+        await this.migrateLegacyFile(pool);
+        return pool;
+      })().catch((error) => {
+        this.schemaPromise = null;
+        throw error;
+      });
+    }
+    return this.schemaPromise;
+  }
+
+  async migrateLegacyFile(pool) {
+    const existing = await pool.query(`SELECT id FROM ${CONFIG_TABLE} WHERE id = 1`);
+    if (existing.rows.length > 0) {
+      return;
+    }
+
+    let parsed;
+    try {
+      parsed = JSON.parse(await this.fs.readFile(this.filePath, 'utf8'));
+    } catch (error) {
+      if (error.code === 'ENOENT') {
+        return;
+      }
+      if (error instanceof SyntaxError) {
+        throw new Error(`Legacy config is not valid JSON: ${error.message}`);
+      }
+      throw error;
+    }
+
+    validateConfig(parsed);
+    const normalized = normalizeConfig(await this.getDefaults(), parsed);
+    await pool.query(
+      `INSERT INTO ${CONFIG_TABLE} (id, document) VALUES (1, $1::jsonb) ON CONFLICT (id) DO NOTHING`,
+      [JSON.stringify(normalized)],
+    );
+  }
+
+  async get() {
+    const pool = await this.initialize();
+    const result = await pool.query(`SELECT document FROM ${CONFIG_TABLE} WHERE id = 1`);
+    const defaults = await this.getDefaults();
+    if (result.rows.length === 0) {
+      return normalizeConfig(defaults, {});
+    }
+
+    const document = result.rows[0].document;
+    try {
+      validateConfig(document);
+    } catch (error) {
+      throw new Error(`Stored PostgreSQL config is invalid: ${error.message}`);
+    }
+    return normalizeConfig(defaults, document);
+  }
+
+  async put(config) {
+    validateConfig(config);
+    const normalized = normalizeConfig(await this.getDefaults(), config);
+    const pool = await this.initialize();
+    const result = await pool.query(`
+      INSERT INTO ${CONFIG_TABLE} (id, document, updated_at)
+      VALUES (1, $1::jsonb, NOW())
+      ON CONFLICT (id) DO UPDATE
+      SET document = EXCLUDED.document, updated_at = NOW()
+      RETURNING document
+    `, [JSON.stringify(normalized)]);
+    return clone(result.rows[0].document);
+  }
+
+  async healthCheck() {
+    const pool = await this.initialize();
+    await pool.query('SELECT 1');
+  }
+
+  async close() {
+    if (!this.ownsPool) {
+      return;
+    }
+    const pool = this.pool || (this.poolPromise ? await this.poolPromise.catch(() => null) : null);
+    await pool?.end();
   }
 }
