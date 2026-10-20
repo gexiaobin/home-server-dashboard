@@ -134,7 +134,7 @@ export function ServiceDialog({ service, categories, open, saving, onClose, onSa
               </datalist>
             </label>
             <label className="field">
-              <span>图标</span>
+              <span>备用图标</span>
               <select value={draft.icon} onChange={(event) => setDraft({ ...draft, icon: event.target.value })}>
                 {serviceIconOptions.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}
               </select>

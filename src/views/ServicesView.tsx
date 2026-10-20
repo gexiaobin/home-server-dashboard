@@ -1,6 +1,6 @@
 import { Clock3, ExternalLink, Pencil, Plus, Server, Star } from 'lucide-react';
 import { useMemo, useState } from 'react';
-import { getServiceIcon } from '../components/icons';
+import { ServiceAppIcon } from '../components/ServiceAppIcon';
 import { statusLabel } from '../lib/format';
 import type { Service, ServiceHealth, ServiceStatus } from '../types';
 
@@ -59,7 +59,6 @@ function ServiceCard({
   onEdit: () => void;
   onToggleFavorite: () => void;
 }) {
-  const Icon = getServiceIcon(service.icon);
   const currentStatus = status?.status || 'unknown';
   const checkedAt = formatCheckedAt(status?.checkedAt);
   const host = getServiceHost(service);
@@ -68,7 +67,7 @@ function ServiceCard({
     <article className="service-card service-pod">
       <div className="service-card-head">
         <div className="service-identity">
-          <div className="service-icon"><Icon size={20} strokeWidth={1.7} /></div>
+          <ServiceAppIcon service={service} />
           <div className="service-title-group">
             <span className="service-category" title={service.category}>{service.category}</span>
             <h3 title={service.name}>{service.name}</h3>
