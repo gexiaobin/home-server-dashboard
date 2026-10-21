@@ -21,7 +21,7 @@
 | `TZ` | `Asia/Shanghai` | 容器时区 |
 | `SERVICE_CHECK_TIMEOUT_MS` | `5000` | HTTP/TCP 探测超时，单位毫秒，必须为正整数 |
 | `SERVICE_ICON_TIMEOUT_MS` | `5000` | 发现并抓取单个服务真实图标的总超时，单位毫秒，必须为正整数 |
-| `SERVICE_ICON_ALLOW_INSECURE_TLS` | `false` | 是否仅为服务图标抓取跳过 HTTPS 证书校验；只能设为 `true` 或 `false` |
+| `SERVICE_ICON_ALLOW_INSECURE_TLS` | `false` | 是否仅为服务页面及其同源图标跳过 HTTPS 证书校验；跨域图标不受此选项影响，只能设为 `true` 或 `false` |
 | `BASIC_AUTH_USERNAME` | 空 | 可选 Basic Auth 用户名；必须与密码同时设置 |
 | `BASIC_AUTH_PASSWORD` | 空 | 可选 Basic Auth 密码；必须与用户名同时设置 |
 
@@ -43,7 +43,9 @@
 
 启用 Basic Auth 后，除 `/api/health` 外的页面和 API 都需要登录。Basic Auth 仅编码凭据而不加密传输，因此必须同时使用 HTTPS。如果密码包含 Compose 插值字符（例如 `$`），请按 Compose `.env` 语法使用单引号或正确转义。
 
-服务目录中的图标由 Express 根据数据库内每个服务的内网 `url` 访问目标页面，并解析页面声明的 favicon；浏览器不会直接访问第三方图标地址，切换到外网模式也不会改变图标抓取目标。`SERVICE_ICON_ALLOW_INSECURE_TLS` 默认必须保持 `false`。只有目标是可信家庭内网服务，并且该服务确实使用自签名或已过期证书时，才可设为 `true`；这会关闭所有服务图标抓取请求的 HTTPS 证书校验，因此不适合公网或不受信任的目标。该选项不影响页面自身的 HTTPS，也不改变 HTTP/TCP 状态检查设置。
+服务目录中的图标由 Express 根据数据库内每个服务的内网 `url` 访问目标页面，并解析页面声明的 favicon，包括页面明确引用的公网 HTTPS CDN 图标。图标由服务端代理，浏览器不会直接访问该第三方地址；切换到外网模式也不会改变用于发现图标的内网 `url`。
+
+抓取会限制总超时、响应大小和候选数，并根据实际字节判断图片类型。跨域图标只允许 HTTPS 默认端口，DNS 解析结果必须全部是公网地址，实际连接会固定到已校验地址；每个候选地址的重定向必须保持在该候选自身的 origin。由于服务页面能够指定第三方图标主机，只应配置可信页面，并注意第三方会看到 NAS 的出口 IP。`SERVICE_ICON_ALLOW_INSECURE_TLS` 默认必须保持 `false`。只有可信家庭内网服务使用自签名或已过期证书时，才可设为 `true`；该选项只影响服务页面和与它同源的图标，跨域 HTTPS 图标仍会严格校验证书。该选项不影响浏览器访问控制台所用的 HTTPS，也不改变 HTTP/TCP 状态检查设置。
 
 ## 应用配置结构
 

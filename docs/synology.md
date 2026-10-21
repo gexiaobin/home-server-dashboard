@@ -45,7 +45,7 @@ BASIC_AUTH_PASSWORD=
 
 生产环境建议将镜像改成明确版本，例如 `:1.0.0`，避免 `latest` 自动变化。不要把实际 URI 写入 Compose、`.env`、README 或截图；数据库应使用专用账号，不要长期使用 `postgres` 超级用户。
 
-服务目录会从每个服务的内网 `url` 抓取页面声明的真实 favicon。切换到外网模式不会让容器改为访问互联网地址。`SERVICE_ICON_ALLOW_INSECURE_TLS` 应保持默认的 `false`；只有可信家庭内网服务使用自签名或已过期 HTTPS 证书、导致图标无法加载时，才改为 `true` 后重建容器。该设置会对所有服务图标抓取关闭证书校验，不应与公网或不受信任的服务地址一起使用。
+服务目录会从每个服务的内网 `url` 发现页面声明的真实 favicon，并支持页面明确引用的公网 HTTPS CDN 图标。图标始终由容器代理获取；切换到外网模式不会让容器改为从 `externalUrl` 发现图标。跨域图标只允许 HTTPS 默认端口，DNS 结果必须是公网地址，且第三方图标主机会看到 NAS 的出口 IP，因此只应配置可信的服务页面。`SERVICE_ICON_ALLOW_INSECURE_TLS` 应保持默认的 `false`；只有可信家庭内网服务使用自签名或已过期 HTTPS 证书、导致图标无法加载时，才改为 `true` 后重建容器。该设置仅对服务页面及其同源图标生效；跨域 HTTPS 图标仍会校验证书。
 
 ## 3. 目录权限
 
@@ -184,7 +184,7 @@ docker compose -f docker-compose.yml -f docker-compose.database-file.yml ps
 
 ### 服务图标没有显示
 
-- 图标由容器根据服务配置中的内网 `url` 获取，先确认容器能解析并访问目标地址。
+- 图标由容器根据服务配置中的内网 `url` 发现并代理获取，先确认容器能解析并访问服务地址以及页面明确声明的公网 HTTPS 图标主机。
 - 默认抓取超时为 5000 毫秒，可通过 `SERVICE_ICON_TIMEOUT_MS` 调整。
-- 可信内网服务使用自签名或已过期证书时，可将 `SERVICE_ICON_ALLOW_INSECURE_TLS` 设为 `true` 后重建；不要为公网或不受信任的服务关闭证书校验。
+- 可信内网服务使用自签名或已过期证书时，可将 `SERVICE_ICON_ALLOW_INSECURE_TLS` 设为 `true` 后重建；此设置不会关闭跨域 HTTPS 图标的证书校验。
 

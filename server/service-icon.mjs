@@ -1,6 +1,8 @@
 import { createHash } from 'node:crypto';
+import { lookup as dnsLookup } from 'node:dns/promises';
 import { request as httpRequest } from 'node:http';
 import { request as httpsRequest } from 'node:https';
+import { BlockList, isIP } from 'node:net';
 
 import { parse } from 'parse5';
 
@@ -10,6 +12,42 @@ const DEFAULT_ICON_LIMIT = 1024 * 1024;
 const DEFAULT_POSITIVE_TTL_MS = 6 * 60 * 60 * 1000;
 const DEFAULT_NEGATIVE_TTL_MS = 60 * 1000;
 const MAX_ICON_CANDIDATES = 12;
+
+const BLOCKED_IPV4 = new BlockList();
+for (const [network, prefix] of [
+  ['0.0.0.0', 8],
+  ['10.0.0.0', 8],
+  ['100.64.0.0', 10],
+  ['127.0.0.0', 8],
+  ['169.254.0.0', 16],
+  ['172.16.0.0', 12],
+  ['192.0.0.0', 24],
+  ['192.0.2.0', 24],
+  ['192.88.99.0', 24],
+  ['192.168.0.0', 16],
+  ['198.18.0.0', 15],
+  ['198.51.100.0', 24],
+  ['203.0.113.0', 24],
+  ['224.0.0.0', 3],
+]) {
+  BLOCKED_IPV4.addSubnet(network, prefix, 'ipv4');
+}
+
+const PUBLIC_IPV6 = new BlockList();
+PUBLIC_IPV6.addSubnet('2000::', 3, 'ipv6');
+
+const BLOCKED_IPV6 = new BlockList();
+for (const [network, prefix] of [
+  ['2001::', 32],
+  ['2001:2::', 48],
+  ['2001:10::', 28],
+  ['2001:20::', 28],
+  ['2001:db8::', 32],
+  ['2002::', 16],
+  ['3fff::', 20],
+]) {
+  BLOCKED_IPV6.addSubnet(network, prefix, 'ipv6');
+}
 
 export class ServiceIconNotFoundError extends Error {
   constructor(message = 'Service icon not found') {
@@ -40,9 +78,89 @@ function getHeader(headers, name) {
   return Array.isArray(value) ? value[0] || '' : String(value || '');
 }
 
+function isPublicNetworkAddress(address) {
+  const family = isIP(address);
+  if (family === 4) return !BLOCKED_IPV4.check(address, 'ipv4');
+  if (family === 6) {
+    return PUBLIC_IPV6.check(address, 'ipv6') && !BLOCKED_IPV6.check(address, 'ipv6');
+  }
+  return false;
+}
+
+function hostnameWithoutBrackets(hostname) {
+  return hostname.startsWith('[') && hostname.endsWith(']') ? hostname.slice(1, -1) : hostname;
+}
+
+function rejectNonPublicAddress(hostname, address) {
+  const error = new Error(`Public network request denied for ${hostname}: non-public address ${address}`);
+  error.code = 'ERR_SERVICE_ICON_NON_PUBLIC_ADDRESS';
+  return error;
+}
+
+async function resolvePublicAddresses(hostname, lookup, timeoutMs) {
+  const normalizedHostname = hostnameWithoutBrackets(hostname);
+  const literalFamily = isIP(normalizedHostname);
+  const resolution = literalFamily
+    ? [{ address: normalizedHostname, family: literalFamily }]
+    : await new Promise((resolve, reject) => {
+      const timer = setTimeout(
+        () => reject(new Error(`Request timed out after ${timeoutMs} ms`)),
+        timeoutMs,
+      );
+      Promise.resolve()
+        .then(() => lookup(normalizedHostname, { all: true, verbatim: true }))
+        .then(resolve, reject)
+        .finally(() => clearTimeout(timer));
+    });
+  const records = (Array.isArray(resolution) ? resolution : [resolution]).map((record) => ({
+    address: String(record?.address || ''),
+    family: isIP(String(record?.address || '')),
+  }));
+
+  if (records.length === 0 || records.some((record) => record.family === 0)) {
+    throw new Error(`DNS lookup returned no usable addresses for ${normalizedHostname}`);
+  }
+  for (const record of records) {
+    if (!isPublicNetworkAddress(record.address)) {
+      throw rejectNonPublicAddress(normalizedHostname, record.address);
+    }
+  }
+  return records;
+}
+
+function createPinnedLookup(records) {
+  return (_hostname, options, callback) => {
+    let requestOptions = options;
+    let done = callback;
+    if (typeof requestOptions === 'function') {
+      done = requestOptions;
+      requestOptions = {};
+    }
+    const requestedFamily = typeof requestOptions === 'number'
+      ? requestOptions
+      : Number(requestOptions?.family) || 0;
+    const matchingRecords = requestedFamily
+      ? records.filter((record) => record.family === requestedFamily)
+      : records;
+
+    queueMicrotask(() => {
+      if (matchingRecords.length === 0) {
+        const error = new Error('No validated address matches the requested family');
+        error.code = 'ENOTFOUND';
+        done(error);
+      } else if (requestOptions?.all) {
+        done(null, matchingRecords);
+      } else {
+        done(null, matchingRecords[0].address, matchingRecords[0].family);
+      }
+    });
+  };
+}
+
 function requestOnce(target, {
   accept,
   allowInsecureTls,
+  lookup,
   maxBytes,
   timeoutMs,
 }) {
@@ -65,6 +183,8 @@ function requestOnce(target, {
         accept,
         'user-agent': 'home-server-dashboard/1.0',
       },
+      // A pooled socket could bypass the validated, pinned DNS lookup.
+      ...(lookup ? { agent: false, lookup } : {}),
       ...(target.protocol === 'https:' ? { rejectUnauthorized: !allowInsecureTls } : {}),
     }, (response) => {
       const status = response.statusCode || 0;
@@ -112,13 +232,18 @@ function requestOnce(target, {
 export async function requestServiceResource(url, {
   accept = '*/*',
   allowInsecureTls = false,
+  lookup = dnsLookup,
   maxBytes = DEFAULT_ICON_LIMIT,
   maxRedirects = 3,
+  requirePublicNetwork = false,
   timeoutMs = DEFAULT_TIMEOUT_MS,
 } = {}) {
   let target = parseHttpUrl(url);
   const allowedOrigin = target.origin;
   const deadline = Date.now() + timeoutMs;
+  const pinnedLookup = requirePublicNetwork
+    ? createPinnedLookup(await resolvePublicAddresses(target.hostname, lookup, timeoutMs))
+    : undefined;
 
   for (let redirectCount = 0; ; redirectCount += 1) {
     const remainingMs = deadline - Date.now();
@@ -126,6 +251,7 @@ export async function requestServiceResource(url, {
     const result = await requestOnce(target, {
       accept,
       allowInsecureTls,
+      lookup: pinnedLookup,
       maxBytes,
       timeoutMs: remainingMs,
     });
@@ -200,7 +326,8 @@ export function parseIconCandidates(html, pageUrl) {
 
     try {
       const candidate = parseHttpUrl(new URL(href, base).toString());
-      if (!isSameOrigin(candidate, page)) return;
+      if (!isSameOrigin(candidate, page)
+        && (candidate.protocol !== 'https:' || candidate.port !== '')) return;
       const declaredType = attribute(node, 'type').toLowerCase();
       if (declaredType === 'image/svg+xml' || candidate.pathname.toLowerCase().endsWith('.svg')) score += 200;
       score += iconSizeScore(attribute(node, 'sizes'));
@@ -275,12 +402,14 @@ export async function resolveServiceIcon(serviceUrl, {
 
   for (const candidate of candidates) {
     try {
-      const icon = await requestWithinDeadline(candidate, {
+      const candidateUrl = parseHttpUrl(candidate);
+      const icon = await requestWithinDeadline(candidateUrl, {
         accept: 'image/avif,image/webp,image/svg+xml,image/png,image/jpeg,image/gif,image/x-icon,*/*;q=0.1',
-        allowInsecureTls,
+        allowInsecureTls: allowInsecureTls && isSameOrigin(candidateUrl, pageUrl),
         maxBytes: iconLimit,
+        requirePublicNetwork: !isSameOrigin(candidateUrl, pageUrl),
       });
-      if (!isSameOrigin(parseHttpUrl(icon.url || candidate), pageUrl)) continue;
+      if (!isSameOrigin(parseHttpUrl(icon.url || candidateUrl), candidateUrl)) continue;
       const contentType = detectIconContentType(icon.body, getHeader(icon.headers, 'content-type'));
       if (!contentType) continue;
       return {

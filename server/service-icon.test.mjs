@@ -64,15 +64,29 @@ describe('parseIconCandidates', () => {
     ]);
   });
 
-  it('ignores embedded and cross-host icon URLs', () => {
+  it('only retains secure default-port icons from a different origin', () => {
     const html = `
       <link rel="icon" href="data:image/png;base64,AAAA">
       <link rel="icon" href="javascript:alert(1)">
       <link rel="icon" href="https://tracker.example/icon.png">
+      <link rel="icon" href="https://tracker.example:8443/admin.png">
       <link rel="icon" href="http://service.example.test:9000/admin.png">
     `;
     expect(parseIconCandidates(html, 'http://service.example.test/app')).toEqual([
+      'https://tracker.example/icon.png',
       'http://service.example.test/favicon.ico',
+    ]);
+  });
+
+  it('retains HTTP and non-standard ports for same-origin icons', () => {
+    const html = `
+      <link rel="icon" href="http://service.example.test:9000/admin.png">
+      <link rel="icon" href="/local.png">
+    `;
+    expect(parseIconCandidates(html, 'http://service.example.test:9000/app')).toEqual([
+      'http://service.example.test:9000/admin.png',
+      'http://service.example.test:9000/local.png',
+      'http://service.example.test:9000/favicon.ico',
     ]);
   });
 
@@ -128,6 +142,8 @@ describe('resolveServiceIcon', () => {
       'http://service.example.test/bad.png',
       'http://service.example.test/good.png',
     ]);
+    expect(requestResource.mock.calls[1][1].requirePublicNetwork).toBe(false);
+    expect(requestResource.mock.calls[2][1].requirePublicNetwork).toBe(false);
   });
 
   it('falls back to the conventional origin favicon when HTML has no icon links', async () => {
@@ -142,6 +158,113 @@ describe('resolveServiceIcon', () => {
     await expect(resolveServiceIcon('http://service.example.test/app', { requestResource }))
       .resolves.toMatchObject({ contentType: 'image/png' });
     expect(String(requestResource.mock.calls[1][0])).toBe('http://service.example.test/favicon.ico');
+  });
+
+  it('accepts a Qinglong-style valid public HTTPS SVG declared on another origin', async () => {
+    const svg = Buffer.from('<svg xmlns="http://www.w3.org/2000/svg"><path d="M0 0h1v1z"/></svg>');
+    const requestResource = vi.fn(async (url) => {
+      const target = new URL(String(url));
+      if (target.hostname === 'service.example.test') {
+        return {
+          url: target,
+          headers: { 'content-type': 'text/html' },
+          body: Buffer.from('<link rel="shortcut icon" href="https://qn.whyour.cn/favicon.svg">'),
+        };
+      }
+      return {
+        url: target,
+        headers: { 'content-type': 'image/svg+xml' },
+        body: svg,
+      };
+    });
+
+    await expect(resolveServiceIcon('https://service.example.test/app', { requestResource }))
+      .resolves.toMatchObject({ body: svg, contentType: 'image/svg+xml' });
+    expect(String(requestResource.mock.calls[1][0])).toBe('https://qn.whyour.cn/favicon.svg');
+    expect(requestResource.mock.calls[1][1]).toMatchObject({
+      allowInsecureTls: false,
+      requirePublicNetwork: true,
+    });
+  });
+
+  it('rejects a cross-origin candidate response that leaves the candidate origin', async () => {
+    const requestResource = vi.fn(async (url) => {
+      const target = new URL(String(url));
+      if (target.hostname === 'service.example.test') {
+        return {
+          url: target,
+          headers: { 'content-type': 'text/html' },
+          body: Buffer.from('<link rel="icon" href="https://cdn.example.test/favicon.svg">'),
+        };
+      }
+      if (target.hostname === 'cdn.example.test') {
+        return {
+          url: new URL('https://redirect.example.test/favicon.svg'),
+          headers: { 'content-type': 'image/svg+xml' },
+          body: Buffer.from('<svg xmlns="http://www.w3.org/2000/svg"></svg>'),
+        };
+      }
+      throw new Error('fallback unavailable');
+    });
+
+    await expect(resolveServiceIcon('https://service.example.test/app', { requestResource }))
+      .rejects.toBeInstanceOf(ServiceIconNotFoundError);
+  });
+
+  it('does not trust an image content type for a cross-origin non-image response', async () => {
+    const requestResource = vi.fn(async (url) => {
+      const target = new URL(String(url));
+      if (target.hostname === 'service.example.test') {
+        return {
+          url: target,
+          headers: { 'content-type': 'text/html' },
+          body: Buffer.from('<link rel="icon" href="https://cdn.example.test/favicon.svg">'),
+        };
+      }
+      if (target.hostname === 'cdn.example.test') {
+        return {
+          url: target,
+          headers: { 'content-type': 'image/svg+xml' },
+          body: Buffer.from('<html>not an icon</html>'),
+        };
+      }
+      throw new Error('fallback unavailable');
+    });
+
+    await expect(resolveServiceIcon('https://service.example.test/app', { requestResource }))
+      .rejects.toBeInstanceOf(ServiceIconNotFoundError);
+  });
+
+  it('only allows insecure TLS for the service origin and its same-origin icons', async () => {
+    const requestResource = vi.fn(async (url) => {
+      const target = new URL(String(url));
+      if (target.pathname === '/app') {
+        return {
+          url: target,
+          headers: { 'content-type': 'text/html' },
+          body: Buffer.from(`
+            <link rel="icon" sizes="64x64" href="https://cdn.example.test/icon.png">
+            <link rel="icon" sizes="32x32" href="/local.png">
+          `),
+        };
+      }
+      if (target.hostname === 'cdn.example.test') throw new Error('unavailable');
+      return { url: target, headers: {}, body: PNG };
+    });
+
+    await expect(resolveServiceIcon('https://service.example.test/app', {
+      allowInsecureTls: true,
+      requestResource,
+    })).resolves.toMatchObject({ contentType: 'image/png' });
+
+    expect(requestResource.mock.calls.map(([url, options]) => ({
+      allowInsecureTls: options.allowInsecureTls,
+      url: String(url),
+    }))).toEqual([
+      { url: 'https://service.example.test/app', allowInsecureTls: true },
+      { url: 'https://cdn.example.test/icon.png', allowInsecureTls: false },
+      { url: 'https://service.example.test/local.png', allowInsecureTls: true },
+    ]);
   });
 
   it('returns a controlled not-found error when no candidate is a valid image', async () => {
@@ -211,6 +334,36 @@ describe('requestServiceResource', () => {
 
     const slowUrl = await serve(() => {});
     await expect(requestServiceResource(slowUrl, { timeoutMs: 25 })).rejects.toThrow('timed out');
+  });
+
+  it('rejects private DNS results before sending an HTTP request', async () => {
+    const handler = vi.fn((_request, response) => response.end(PNG));
+    const baseUrl = new URL(await serve(handler));
+    const lookup = vi.fn(async () => [{ address: '127.0.0.1', family: 4 }]);
+
+    await expect(requestServiceResource(`http://icon.public.example:${baseUrl.port}/favicon.png`, {
+      lookup,
+      requirePublicNetwork: true,
+    })).rejects.toThrow('non-public address 127.0.0.1');
+
+    expect(lookup).toHaveBeenCalledWith('icon.public.example', { all: true, verbatim: true });
+    expect(handler).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    'http://10.0.0.1/icon.png',
+    'http://100.64.0.1/icon.png',
+    'http://169.254.169.254/icon.png',
+    'http://192.0.2.1/icon.png',
+    'http://[::1]/icon.png',
+    'http://[fc00::1]/icon.png',
+    'http://[fe80::1]/icon.png',
+    'http://[2001:db8::1]/icon.png',
+  ])('rejects the non-public literal %s without DNS or a network request', async (url) => {
+    const lookup = vi.fn();
+    await expect(requestServiceResource(url, { lookup, requirePublicNetwork: true }))
+      .rejects.toThrow('non-public address');
+    expect(lookup).not.toHaveBeenCalled();
   });
 });
 
