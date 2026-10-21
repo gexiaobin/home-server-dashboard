@@ -65,6 +65,26 @@ describe('network mode navigation', () => {
     expect(screen.getByRole('link', { name: '打开 Vaultwarden' })).toHaveAttribute('href', service.externalUrl);
   });
 
+  it('shows the discovered service icon on the overview launch surface and keeps the fallback', () => {
+    const { container } = render(
+      <OverviewView config={config} overview={null} networkMode="internal" onNavigate={vi.fn()} />,
+    );
+    const icon = container.querySelector('.launch-card .service-app-icon');
+    const image = icon?.querySelector('img');
+    const fallback = icon?.querySelector('svg');
+
+    expect(image).toHaveAttribute('src', '/api/services/vaultwarden/icon');
+    expect(fallback).not.toHaveClass('is-hidden');
+
+    fireEvent.load(image as HTMLImageElement);
+    expect(image).toHaveClass('is-loaded');
+    expect(fallback).toHaveClass('is-hidden');
+
+    fireEvent.error(image as HTMLImageElement);
+    expect(icon?.querySelector('img')).toBeNull();
+    expect(fallback).not.toHaveClass('is-hidden');
+  });
+
   it('uses the active URL in the topology inspector', () => {
     const { container } = render(
       <TopologyView

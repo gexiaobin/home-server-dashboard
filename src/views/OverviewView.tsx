@@ -10,7 +10,7 @@ import {
   Server,
 } from 'lucide-react';
 import datacenterImage from '../assets/datacenter.jpg';
-import { getServiceIcon } from '../components/icons';
+import { ServiceAppIcon } from '../components/ServiceAppIcon';
 import { formatRate, formatUptime, statusLabel } from '../lib/format';
 import { getServiceHost, getServiceUrl } from '../lib/service-url';
 import type { AppConfig, NetworkMode, Overview, ServiceHealth } from '../types';
@@ -86,7 +86,6 @@ export function OverviewView({ config, overview, networkMode, onNavigate }: Over
 
         <div className="launch-grid">
           {launchServices.map((service) => {
-            const Icon = getServiceIcon(service.icon);
             const status = statusById.get(service.id);
             const state = status?.status ?? 'unknown';
             const activeUrl = getServiceUrl(service, networkMode);
@@ -94,7 +93,7 @@ export function OverviewView({ config, overview, networkMode, onNavigate }: Over
             return (
               <article className={`launch-card is-${state}`} key={service.id}>
                 <div className="launch-card-top">
-                  <span className="launch-icon"><Icon size={23} strokeWidth={1.7} /></span>
+                  <ServiceAppIcon service={service} />
                   <span className={`health-chip is-${state}`}><i />{statusLabel(state)}</span>
                 </div>
                 <div className="launch-card-copy">

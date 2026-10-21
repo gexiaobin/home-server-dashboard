@@ -1110,16 +1110,10 @@ a {
   gap: 12px;
 }
 
-.launch-icon {
+.launch-card .service-app-icon {
   width: 40px;
   height: 40px;
   flex: 0 0 40px;
-  display: grid;
-  place-items: center;
-  color: var(--accent);
-  background: var(--accent-dim);
-  border: 1px solid #495720;
-  border-radius: 4px;
 }
 
 .health-chip {
