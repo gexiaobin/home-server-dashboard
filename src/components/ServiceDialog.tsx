@@ -21,6 +21,7 @@ const blankService: Service = {
   externalUrl: '',
   category: '其他',
   icon: 'default',
+  iconAllowInsecureTls: false,
   favorite: false,
   check: { type: 'none' },
 };
@@ -229,18 +230,34 @@ export function ServiceDialog({ service, categories, open, saving, onClose, onSa
             )}
           </fieldset>
 
-          <label className="toggle-row">
-            <input
-              type="checkbox"
-              checked={draft.favorite}
-              onChange={(event) => setDraft({ ...draft, favorite: event.target.checked })}
-            />
-            <span className="toggle-switch" />
-            <span>
-              <strong>设为常用</strong>
-              <small>服务会显示在导航页顶部</small>
-            </span>
-          </label>
+          <div className="service-option-list">
+            <label className="toggle-row">
+              <input
+                type="checkbox"
+                aria-label="允许自签名 HTTPS 图标"
+                checked={draft.iconAllowInsecureTls}
+                onChange={(event) => setDraft({ ...draft, iconAllowInsecureTls: event.target.checked })}
+              />
+              <span className="toggle-switch" />
+              <span>
+                <strong>允许自签名 HTTPS 图标</strong>
+                <small>仅对这个可信内网服务的页面和同源图标跳过证书校验</small>
+              </span>
+            </label>
+
+            <label className="toggle-row">
+              <input
+                type="checkbox"
+                checked={draft.favorite}
+                onChange={(event) => setDraft({ ...draft, favorite: event.target.checked })}
+              />
+              <span className="toggle-switch" />
+              <span>
+                <strong>设为常用</strong>
+                <small>服务会显示在导航页顶部</small>
+              </span>
+            </label>
+          </div>
 
           {error && <div className="form-error" role="alert">{error}</div>}
 

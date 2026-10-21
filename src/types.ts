@@ -16,6 +16,7 @@ export interface Service {
   externalUrl: string;
   category: string;
   icon: string;
+  iconAllowInsecureTls: boolean;
   favorite: boolean;
   check: ServiceCheck;
 }
@@ -23,10 +24,27 @@ export interface Service {
 export interface TopologyNode {
   id: string;
   label: string;
-  type: 'internet' | 'router' | 'nas' | 'server' | 'vm' | 'container' | 'client';
+  type: 'internet' | 'router' | 'nas' | 'server' | 'vm' | 'container' | 'client' | 'switch' | 'ap' | 'camera' | 'printer';
   serviceId?: string;
   x: number;
   y: number;
+  status?: ServiceStatus;
+  ipAddress?: string;
+  mac?: string;
+  interface?: string;
+  uplinkDevice?: string;
+  vendor?: string;
+  model?: string;
+  version?: string;
+  clientType?: string;
+  upload?: number;
+  download?: number;
+  totalUp?: number;
+  totalDown?: number;
+  connectedAt?: string;
+  uptimeSeconds?: number;
+  cpuUsage?: number;
+  memoryUsage?: number;
 }
 
 export interface TopologyLink {
@@ -39,12 +57,32 @@ export interface AppConfig {
   settings: {
     title: string;
     location: string;
+    hostDisplayName: string;
     refreshInterval: number;
   };
   services: Service[];
   topology: {
+    source: 'manual' | 'ikuai';
+    refreshInterval: number;
     nodes: TopologyNode[];
     links: TopologyLink[];
+  };
+}
+
+export interface TopologySnapshot {
+  requestedSource: 'manual' | 'ikuai';
+  source: 'manual' | 'ikuai';
+  status: 'manual' | 'live' | 'fallback';
+  message?: string;
+  updatedAt: string | null;
+  nodes: TopologyNode[];
+  links: TopologyLink[];
+  stats?: {
+    onlineClients: number;
+    knownDevices: number;
+    linkedInterfaces: number;
+    upload: number;
+    download: number;
   };
 }
 
@@ -68,6 +106,7 @@ export interface Overview {
   timestamp: string;
   system: {
     hostname: string;
+    detectedHostname: string;
     platform: string;
     uptime: number;
     loadAverage: number[];

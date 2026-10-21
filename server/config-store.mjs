@@ -7,10 +7,13 @@ export const DEFAULT_CONFIG = Object.freeze({
   settings: Object.freeze({
     title: 'Home Server',
     location: 'Home network',
+    hostDisplayName: '',
     refreshInterval: 5000,
   }),
   services: Object.freeze([]),
   topology: Object.freeze({
+    source: 'manual',
+    refreshInterval: 15_000,
     nodes: Object.freeze([]),
     links: Object.freeze([]),
   }),
@@ -66,6 +69,14 @@ export function validateConfig(config) {
     if (config.settings.location !== undefined && typeof config.settings.location !== 'string') {
       throw new ConfigValidationError('settings.location must be a string');
     }
+    if (config.settings.hostDisplayName !== undefined) {
+      if (typeof config.settings.hostDisplayName !== 'string') {
+        throw new ConfigValidationError('settings.hostDisplayName must be a string');
+      }
+      if (config.settings.hostDisplayName.trim().length > 100) {
+        throw new ConfigValidationError('settings.hostDisplayName must be at most 100 characters');
+      }
+    }
     if (config.settings.refreshInterval !== undefined) {
       const interval = config.settings.refreshInterval;
       if (!Number.isInteger(interval) || interval < 1000 || interval > 3_600_000) {
@@ -108,6 +119,9 @@ export function validateConfig(config) {
       if (service.icon !== undefined && typeof service.icon !== 'string') {
         throw new ConfigValidationError(`services[${index}].icon must be a string`);
       }
+      if (service.iconAllowInsecureTls !== undefined && typeof service.iconAllowInsecureTls !== 'boolean') {
+        throw new ConfigValidationError(`services[${index}].iconAllowInsecureTls must be a boolean`);
+      }
       if (service.favorite !== undefined && typeof service.favorite !== 'boolean') {
         throw new ConfigValidationError(`services[${index}].favorite must be a boolean`);
       }
@@ -138,6 +152,15 @@ export function validateConfig(config) {
     if (config.topology.links !== undefined && !Array.isArray(config.topology.links)) {
       throw new ConfigValidationError('topology.links must be an array');
     }
+    if (config.topology.source !== undefined && !['manual', 'ikuai'].includes(config.topology.source)) {
+      throw new ConfigValidationError('topology.source must be manual or ikuai');
+    }
+    if (config.topology.refreshInterval !== undefined) {
+      const interval = config.topology.refreshInterval;
+      if (!Number.isInteger(interval) || interval < 5_000 || interval > 300_000) {
+        throw new ConfigValidationError('topology.refreshInterval must be an integer between 5000 and 300000');
+      }
+    }
     const nodeIds = new Set();
     for (const [index, node] of (config.topology.nodes ?? []).entries()) {
       if (!isObject(node)) {
@@ -149,7 +172,19 @@ export function validateConfig(config) {
         throw new ConfigValidationError(`Duplicate topology node id: ${node.id}`);
       }
       nodeIds.add(node.id);
-      if (node.type !== undefined && !['internet', 'router', 'nas', 'server', 'vm', 'container', 'client'].includes(node.type)) {
+      if (node.type !== undefined && ![
+        'internet',
+        'router',
+        'nas',
+        'server',
+        'vm',
+        'container',
+        'client',
+        'switch',
+        'ap',
+        'camera',
+        'printer',
+      ].includes(node.type)) {
         throw new ConfigValidationError(`topology.nodes[${index}].type is not supported`);
       }
       for (const coordinate of ['x', 'y']) {
@@ -174,32 +209,41 @@ export function validateConfig(config) {
 }
 
 export function normalizeConfig(defaults, config) {
+  const hostDisplayName = config.settings?.hostDisplayName
+    ?? defaults.settings?.hostDisplayName
+    ?? '';
+  const topologyDefaults = defaults.topology ?? DEFAULT_CONFIG.topology;
+  const topologyConfig = config.topology ?? {};
   return {
     ...clone(defaults),
     ...clone(config),
     settings: {
       ...(defaults.settings ?? {}),
       ...(config.settings ?? {}),
+      hostDisplayName: hostDisplayName.trim(),
     },
     services: clone(config.services ?? defaults.services ?? []).map((service) => ({
       description: '',
       category: '其他',
       icon: 'default',
+      iconAllowInsecureTls: false,
       favorite: false,
       check: { type: 'none' },
       ...service,
       externalUrl: service.externalUrl?.trim() || '',
     })),
     topology: {
-      ...(defaults.topology ?? {}),
-      ...(config.topology ?? {}),
-      nodes: clone(config.topology?.nodes ?? defaults.topology?.nodes ?? []).map((node) => ({
+      source: topologyConfig.source ?? topologyDefaults.source ?? 'manual',
+      refreshInterval: topologyConfig.refreshInterval
+        ?? topologyDefaults.refreshInterval
+        ?? 15_000,
+      nodes: clone(topologyConfig.nodes ?? topologyDefaults.nodes ?? []).map((node) => ({
         type: 'server',
         x: 50,
         y: 50,
         ...node,
       })),
-      links: clone(config.topology?.links ?? defaults.topology?.links ?? []),
+      links: clone(topologyConfig.links ?? topologyDefaults.links ?? []),
     },
   };
 }

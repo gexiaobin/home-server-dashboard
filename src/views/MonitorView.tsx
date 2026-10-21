@@ -4,6 +4,7 @@ import {
   ArrowUpFromLine,
   Box,
   Boxes,
+  Clock3,
   Cpu,
   Gauge,
   HardDrive,
@@ -45,9 +46,10 @@ interface MetricCardProps {
   secondaryValue: string;
   available?: boolean;
   meterValueText?: string;
+  showMeter?: boolean;
 }
 
-const LOAD_LABELS = ['1 分钟', '5 分钟', '15 分钟'];
+const LOAD_LABELS = ['最近 1 分钟', '最近 5 分钟', '最近 15 分钟'];
 
 function Meter({
   value,
@@ -91,6 +93,21 @@ function metricStatus(value: number, warning: number, danger: number) {
   return '运行稳定';
 }
 
+function loadStatus(value: number) {
+  if (value >= 100) return { label: '超载', tone: 'danger' };
+  if (value >= 75) return { label: '繁忙', tone: 'warning' };
+  if (value >= 40) return { label: '正常', tone: 'normal' };
+  return { label: '轻载', tone: 'quiet' };
+}
+
+function diskLabel(mount: string, index: number) {
+  if (mount === '/') return '系统根目录';
+  const segment = mount.split('/').filter(Boolean).at(-1);
+  if (segment === 'storage') return `存储空间 ${index + 1}`;
+  if (/^volume\d+$/i.test(segment || '')) return `存储空间 ${segment?.replace(/\D/g, '')}`;
+  return segment || `存储空间 ${index + 1}`;
+}
+
 function MetricCard({
   label,
   value,
@@ -103,9 +120,10 @@ function MetricCard({
   secondaryValue,
   available = true,
   meterValueText,
+  showMeter = true,
 }: MetricCardProps) {
   return (
-    <article className={`monitor-metric tone-${tone}${available ? '' : ' is-unavailable'}`} aria-label={`${label} ${value}`}>
+    <article className={`monitor-metric tone-${tone}${available ? '' : ' is-unavailable'}${showMeter ? '' : ' is-meterless'}`} aria-label={`${label} ${value}`}>
       <div className="monitor-metric-heading">
         <span className="monitor-metric-icon"><Icon size={17} /></span>
         <span>{label}</span>
@@ -115,13 +133,15 @@ function MetricCard({
         <strong>{value}</strong>
         <span>{detail}</span>
       </div>
-      <Meter
-        value={percent}
-        tone={tone}
-        label={label}
-        valueText={meterValueText}
-        available={available}
-      />
+      {showMeter && (
+        <Meter
+          value={percent}
+          tone={tone}
+          label={label}
+          valueText={meterValueText}
+          available={available}
+        />
+      )}
       <div className="monitor-metric-foot">
         <span>{secondaryLabel}</span>
         <b>{secondaryValue}</b>
@@ -176,10 +196,11 @@ function EmptyMonitor() {
 export function MonitorView({ overview, history, connected = true }: MonitorViewProps) {
   if (!overview) return <EmptyMonitor />;
 
-  const disk = overview.disks.reduce<(typeof overview.disks)[number] | undefined>(
-    (largest, candidate) => !largest || candidate.total > largest.total ? candidate : largest,
-    undefined,
+  const storage = overview.disks.reduce(
+    (total, disk) => ({ used: total.used + disk.used, total: total.total + disk.total }),
+    { used: 0, total: 0 },
   );
+  const storagePercent = storage.total > 0 ? (storage.used / storage.total) * 100 : 0;
   const temperature = overview.temperatures.reduce<(typeof overview.temperatures)[number] | undefined>(
     (hottest, candidate) => !hottest || candidate.value > hottest.value ? candidate : hottest,
     undefined,
@@ -192,6 +213,7 @@ export function MonitorView({ overview, history, connected = true }: MonitorView
   const oneMinuteLoadPercent = overview.cpu.cores > 0
     ? (loadAverage[0].value / overview.cpu.cores) * 100
     : 0;
+  const oneMinuteLoadStatus = loadStatus(oneMinuteLoadPercent);
   const latest = history.at(-1);
 
   return (
@@ -220,8 +242,8 @@ export function MonitorView({ overview, history, connected = true }: MonitorView
           icon={Cpu}
           tone="accent"
           status={metricStatus(overview.cpu.usage, 70, 90)}
-          secondaryLabel="1 分钟负载"
-          secondaryValue={`${Math.round(oneMinuteLoadPercent)}% · ${loadAverage[0].value.toFixed(2)}`}
+          secondaryLabel="最近 1 分钟负载"
+          secondaryValue={`${Math.round(oneMinuteLoadPercent)}% · ${oneMinuteLoadStatus.label}`}
         />
         <MetricCard
           label="内存占用"
@@ -235,30 +257,44 @@ export function MonitorView({ overview, history, connected = true }: MonitorView
           secondaryValue={formatBytes(Math.max(0, overview.memory.total - overview.memory.used))}
         />
         <MetricCard
-          label="存储空间"
-          value={disk ? `${Math.round(disk.percent)}%` : '--'}
-          detail={disk ? `${formatBytes(disk.used)} / ${formatBytes(disk.total)}` : '未挂载存储卷'}
-          percent={disk?.percent || 0}
+          label="存储总览"
+          value={overview.disks.length ? `${Math.round(storagePercent)}%` : '--'}
+          detail={overview.disks.length ? `${overview.disks.length} 个存储空间 · ${formatBytes(storage.used)} / ${formatBytes(storage.total)}` : '未挂载存储卷'}
+          percent={storagePercent}
           icon={HardDrive}
           tone="amber"
-          status={disk ? metricStatus(disk.percent, 80, 92) : '未采集'}
-          secondaryLabel="监控卷"
-          secondaryValue={disk?.mount || '不可用'}
-          available={Boolean(disk)}
+          status={overview.disks.length ? metricStatus(storagePercent, 80, 92) : '未采集'}
+          secondaryLabel="剩余可用"
+          secondaryValue={overview.disks.length ? formatBytes(Math.max(0, storage.total - storage.used)) : '不可用'}
+          available={overview.disks.length > 0}
         />
-        <MetricCard
-          label="系统温度"
-          value={temperature ? `${Math.round(temperature.value)}°C` : '--'}
-          detail={temperature?.label || '传感器不可用'}
-          percent={temperature?.value || 0}
-          icon={Thermometer}
-          tone="red"
-          status={temperature ? metricStatus(temperature.value, 70, 85) : '未采集'}
-          secondaryLabel="传感器"
-          secondaryValue={temperature ? `${overview.temperatures.length} 个可用` : '未映射'}
-          meterValueText={temperature ? `${Math.round(temperature.value)}°C` : undefined}
-          available={Boolean(temperature)}
-        />
+        {temperature ? (
+          <MetricCard
+            label="系统温度"
+            value={`${Math.round(temperature.value)}°C`}
+            detail={temperature.label}
+            percent={temperature.value}
+            icon={Thermometer}
+            tone="red"
+            status={metricStatus(temperature.value, 70, 85)}
+            secondaryLabel="传感器"
+            secondaryValue={`${overview.temperatures.length} 个可用`}
+            meterValueText={`${Math.round(temperature.value)}°C`}
+          />
+        ) : (
+          <MetricCard
+            label="系统运行时间"
+            value={formatUptime(overview.system.uptime)}
+            detail={`${overview.system.platform.toUpperCase()} 主机持续在线`}
+            percent={0}
+            icon={Clock3}
+            tone="cyan"
+            status="在线"
+            secondaryLabel="容器状态"
+            secondaryValue={overview.containersAvailable ? `${runningContainers} / ${overview.containers.length} 运行中` : 'Docker 未连接'}
+            showMeter={false}
+          />
+        )}
       </section>
 
       <div className="monitor-grid">
@@ -311,17 +347,13 @@ export function MonitorView({ overview, history, connected = true }: MonitorView
           <div className="host-loads" aria-label="系统平均负载">
             {loadAverage.map((load) => {
               const loadPercent = overview.cpu.cores > 0 ? (load.value / overview.cpu.cores) * 100 : 0;
+              const state = loadStatus(loadPercent);
               return (
                 <div key={load.label}>
                   <span>{load.label}</span>
-                  <strong>{load.value.toFixed(2)}</strong>
-                  <Meter
-                    value={loadPercent}
-                    tone="accent"
-                    label={`${load.label}系统负载`}
-                    valueText={`${Math.round(loadPercent)}% 核心容量`}
-                  />
-                  <small>{Math.round(loadPercent)}% 核心容量</small>
+                  <strong>{Math.round(loadPercent)}%</strong>
+                  <small>负载 {load.value.toFixed(2)} / {overview.cpu.cores} 核</small>
+                  <i className={`load-state is-${state.tone}`}>{state.label}</i>
                 </div>
               );
             })}
@@ -331,6 +363,35 @@ export function MonitorView({ overview, history, connected = true }: MonitorView
             <div><dt>运行时间</dt><dd>{formatUptime(overview.system.uptime)}</dd></div>
             <div><dt>可见容器</dt><dd>{overview.containersAvailable ? `${overview.containers.length} 个` : '未连接'}</dd></div>
           </dl>
+        </section>
+
+        <section className="monitor-panel storage-panel">
+          <PanelHeading kicker="STORAGE / FILESYSTEMS" title="存储空间" icon={HardDrive}>
+            <span className="storage-total">{overview.disks.length} 个卷 · {formatBytes(storage.total)}</span>
+          </PanelHeading>
+          {overview.disks.length > 0 ? (
+            <div className="storage-list" role="list" aria-label="存储空间">
+              {overview.disks.map((disk, index) => (
+                <article className="storage-row" role="listitem" key={disk.mount}>
+                  <div className="storage-identity">
+                    <span><HardDrive size={16} /></span>
+                    <div><strong>{diskLabel(disk.mount, index)}</strong><small>{disk.mount}</small></div>
+                  </div>
+                  <div className="storage-usage">
+                    <strong>{Math.round(disk.percent)}%</strong>
+                    <span>{formatBytes(disk.used)} / {formatBytes(disk.total)}</span>
+                  </div>
+                  <Meter value={disk.percent} tone="amber" label={`${diskLabel(disk.mount, index)}使用率`} />
+                  <span className="storage-free">可用 {formatBytes(Math.max(0, disk.total - disk.used))}</span>
+                </article>
+              ))}
+            </div>
+          ) : (
+            <div className="panel-empty">
+              <HardDrive size={22} />
+              <div><strong>没有可见存储空间</strong><span>请检查容器的只读存储挂载配置。</span></div>
+            </div>
+          )}
         </section>
 
         <section className="monitor-panel network-panel">

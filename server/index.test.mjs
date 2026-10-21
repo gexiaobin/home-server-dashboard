@@ -10,6 +10,7 @@ import {
   createConfigStore,
   listDockerContainers,
 } from './index.mjs';
+import { IkuaiProviderError } from './ikuai.mjs';
 
 const servers = [];
 const temporaryDirectories = [];
@@ -19,6 +20,7 @@ const configFixture = {
   settings: {
     title: 'Test dashboard',
     location: 'Test lab',
+    hostDisplayName: '',
     refreshInterval: 5_000,
   },
   services: [
@@ -29,7 +31,7 @@ const configFixture = {
       check: { type: 'http' },
     },
   ],
-  topology: { nodes: [], links: [] },
+  topology: { source: 'manual', refreshInterval: 15_000, nodes: [], links: [] },
 };
 
 function createDependencies(overrides = {}) {
@@ -68,6 +70,7 @@ function createDependencies(overrides = {}) {
       status: 'Up 1 hour',
     }])),
     dockerSocket: null,
+    topologyProvider: { load: vi.fn() },
     basicAuth: null,
     env: { npm_package_version: '9.9.9' },
     logger: { log: vi.fn(), warn: vi.fn(), error: vi.fn() },
@@ -130,7 +133,7 @@ describe('checkService', () => {
     expect(fetchImpl).not.toHaveBeenCalled();
   });
 
-  it('reports a successful HTTP probe with deterministic timing', async () => {
+  it('uses the internal URL for an HTTP probe when an external URL is configured', async () => {
     const fetchImpl = vi.fn(async () => ({ status: 204, body: null }));
     const monotonicNow = vi.fn().mockReturnValueOnce(100).mockReturnValueOnce(112);
 
@@ -153,6 +156,10 @@ describe('checkService', () => {
       message: 'HTTP 204',
     });
     expect(fetchImpl.mock.calls[0][0]).toEqual(new URL('http://photos.home.arpa'));
+    expect(fetchImpl).not.toHaveBeenCalledWith(
+      new URL('https://photos.example.com'),
+      expect.anything(),
+    );
   });
 
   it('uses an explicit HTTP probe URL instead of either navigation URL', async () => {
@@ -309,6 +316,101 @@ describe('createApp', () => {
     expect(dependencies.configStore.put).not.toHaveBeenCalled();
   });
 
+  it('returns the persisted manual topology without invoking iKuai', async () => {
+    const dependencies = createDependencies({
+      configStore: {
+        get: vi.fn(async () => ({
+          ...configFixture,
+          topology: {
+            ...configFixture.topology,
+            nodes: [{ id: 'router', label: 'Router', type: 'router', x: 50, y: 50 }],
+          },
+        })),
+        put: vi.fn(),
+      },
+    });
+    const baseUrl = await serve(createApp(dependencies));
+
+    const response = await fetch(`${baseUrl}/api/topology`);
+
+    expect(response.status).toBe(200);
+    await expect(readJson(response)).resolves.toMatchObject({
+      requestedSource: 'manual',
+      source: 'manual',
+      status: 'manual',
+      nodes: [{ id: 'router' }],
+    });
+    expect(dependencies.topologyProvider.load).not.toHaveBeenCalled();
+  });
+
+  it('serves live iKuai topology and falls back without failing the API', async () => {
+    const ikuaiConfigStore = {
+      get: vi.fn(async () => ({
+        ...configFixture,
+        topology: { ...configFixture.topology, source: 'ikuai', refreshInterval: 30_000 },
+      })),
+      put: vi.fn(),
+    };
+    const liveDependencies = createDependencies({
+      configStore: ikuaiConfigStore,
+      topologyProvider: {
+        load: vi.fn(async () => ({
+          updatedAt: '2026-10-21T12:00:00.000Z',
+          nodes: [{ id: 'ikuai-router', label: 'iKuai', type: 'router', x: 50, y: 30 }],
+          links: [],
+          stats: { onlineClients: 1 },
+        })),
+      },
+    });
+    const liveUrl = await serve(createApp(liveDependencies));
+    const liveResponse = await fetch(`${liveUrl}/api/topology`);
+
+    await expect(readJson(liveResponse)).resolves.toMatchObject({
+      requestedSource: 'ikuai',
+      source: 'ikuai',
+      status: 'live',
+      nodes: [{ id: 'ikuai-router' }],
+    });
+    expect(liveDependencies.topologyProvider.load).toHaveBeenCalledWith(30_000);
+
+    const fallbackDependencies = createDependencies({
+      configStore: ikuaiConfigStore,
+      topologyProvider: {
+        load: vi.fn(async () => {
+          throw new IkuaiProviderError('missing token', 'IKUAI_NOT_CONFIGURED');
+        }),
+      },
+    });
+    const fallbackUrl = await serve(createApp(fallbackDependencies));
+    const fallbackResponse = await fetch(`${fallbackUrl}/api/topology`);
+
+    expect(fallbackResponse.status).toBe(200);
+    await expect(readJson(fallbackResponse)).resolves.toMatchObject({
+      requestedSource: 'ikuai',
+      source: 'manual',
+      status: 'fallback',
+      message: expect.stringContaining('API Token'),
+    });
+
+    const authFallbackDependencies = createDependencies({
+      configStore: ikuaiConfigStore,
+      topologyProvider: {
+        load: vi.fn(async () => {
+          throw new IkuaiProviderError('router detail must stay private', 'IKUAI_AUTH_FAILED');
+        }),
+      },
+    });
+    const authFallbackUrl = await serve(createApp(authFallbackDependencies));
+    const authFallbackResponse = await fetch(`${authFallbackUrl}/api/topology`);
+    const authFallback = await readJson(authFallbackResponse);
+
+    expect(authFallback).toMatchObject({
+      status: 'fallback',
+      message: expect.stringContaining('无效、已过期或权限不足'),
+    });
+    expect(authFallback.message).not.toContain('router detail');
+  });
+
   it.each(['GET', 'POST'])('checks one configured service via %s without real network access', async (method) => {
     const dependencies = createDependencies();
     const baseUrl = await serve(createApp(dependencies));
@@ -390,7 +492,7 @@ describe('createApp', () => {
 
     expect(response.status).toBe(200);
     expect(overview).toMatchObject({
-      system: { hostname: 'nas-test' },
+      system: { hostname: 'nas-test', detectedHostname: 'nas-test' },
       cpu: { usage: 12.5, cores: 4 },
       services: [{ id: 'photos', status: 'up' }],
       containers: [{ id: 'container-1', name: 'photos', state: 'running' }],
@@ -402,6 +504,41 @@ describe('createApp', () => {
       { timeoutMs: 321 },
     );
     expect(dependencies.dockerClient).toHaveBeenCalledWith('/fixture/docker.sock', { timeoutMs: 654 });
+  });
+
+  it('uses the persisted host display name and keeps the detected hostname available', async () => {
+    const dependencies = createDependencies({
+      env: { HOST_DISPLAY_NAME: 'Legacy environment name' },
+      configStore: {
+        get: vi.fn(async () => ({
+          ...configFixture,
+          settings: { ...configFixture.settings, hostDisplayName: 'Synology DS920+' },
+        })),
+        put: vi.fn(async (config) => config),
+      },
+    });
+    const baseUrl = await serve(createApp(dependencies));
+
+    const response = await fetch(`${baseUrl}/api/overview`);
+
+    expect(response.status).toBe(200);
+    await expect(readJson(response)).resolves.toMatchObject({
+      system: {
+        hostname: 'Synology DS920+',
+        detectedHostname: 'nas-test',
+      },
+    });
+  });
+
+  it('does not let a deployment environment override an empty persisted display name', async () => {
+    const dependencies = createDependencies({ env: { HOST_DISPLAY_NAME: 'Legacy NAS' } });
+    const baseUrl = await serve(createApp(dependencies));
+
+    const response = await fetch(`${baseUrl}/api/overview`);
+
+    await expect(readJson(response)).resolves.toMatchObject({
+      system: { hostname: 'nas-test', detectedHostname: 'nas-test' },
+    });
   });
 
   it('keeps overview available when Docker container discovery times out', async () => {

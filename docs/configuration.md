@@ -17,9 +17,16 @@
 | `DATABASE_CONNECT_TIMEOUT_MS` | `5000` | 数据库连接超时，单位毫秒 |
 | `DATABASE_QUERY_TIMEOUT_MS` | `5000` | 数据库查询和语句超时，单位毫秒 |
 | `DATA_PATH` | `./data` | 旧 `config.json` 的一次性迁移目录，也供本地文件模式使用 |
-| `HOST_STORAGE_PATH` | `/volume1` | 用于容量统计的宿主存储路径，只读挂载 |
-| `HOST_DISPLAY_NAME` | 空 | 概览和监控页显示的设备名称；为空时会显示容器 hostname |
+| `HOST_STORAGE_PATH` | `/volume1` | 用于容量统计的主存储路径，只读挂载 |
+| `HOST_STORAGE_PATH_2` | `/volume2` | 群晖多存储覆盖文件使用的第二个存储路径 |
+| `HOST_STORAGE_PATH_3` | `/volume3` | 群晖多存储覆盖文件使用的第三个存储路径 |
 | `DOCKER_API_TIMEOUT_MS` | `3000` | 可选 Docker 容器列表查询的总超时，单位毫秒 |
+| `IKUAI_BASE_URL` | 空 | iKuai 路由器的 HTTP(S) origin，例如协议、主机与可选端口；不能包含凭据、路径、查询参数或片段 |
+| `IKUAI_TOKEN` | 空 | 可选的 iKuai v4 API Token；与 `IKUAI_TOKEN_FILE` 二选一，生产部署不推荐直接使用环境变量 |
+| `IKUAI_TOKEN_FILE` | 空 | 容器内的 iKuai Token 文件路径；与 `IKUAI_TOKEN` 二选一 |
+| `IKUAI_TOKEN_FILE_PATH` | `./secrets/ikuai_token` | 使用 iKuai 秘密文件覆盖文件时的宿主文件路径 |
+| `IKUAI_TIMEOUT_MS` | `5000` | 每个 iKuai API 请求的超时，单位毫秒，允许 `100` 到 `60000` |
+| `IKUAI_ALLOW_INSECURE_TLS` | `false` | 是否跳过 iKuai HTTPS 证书校验；仅限可信内网自签名路由器，只能设为 `true` 或 `false` |
 | `TZ` | `Asia/Shanghai` | 容器时区 |
 | `SERVICE_CHECK_TIMEOUT_MS` | `5000` | HTTP/TCP 探测超时，单位毫秒，必须为正整数 |
 | `SERVICE_ICON_TIMEOUT_MS` | `5000` | 发现并抓取单个服务真实图标的总超时，单位毫秒，必须为正整数 |
@@ -36,18 +43,24 @@
 | `DATA_DIR` | `/app/data` | 旧 JSON 迁移目录；`STORAGE_BACKEND=file` 时作为持久化目录 |
 | `HOST_PROC` | `/host/proc` | 宿主 `/proc` 的只读映射 |
 | `HOST_SYS` | `/host/sys` | 宿主 `/sys` 的只读映射 |
-| `HOST_STORAGE` | `/host/storage` | 宿主存储卷的只读映射 |
+| `HOST_STORAGE` | `/host/storage` | 逗号分隔的容器内存储挂载点；群晖覆盖文件会加入另外两个卷 |
 | `DOCKER_SOCKET` | 未设置 | 可选 Docker Socket；默认禁用，详见群晖部署文档 |
 
 不要把 `.env`、`secrets/` 或数据库 URI 提交到公共仓库。浏览器端代码中的任何变量都不能作为秘密保存；NAS 凭据、Token 和 SNMP 密码只能放在受控的服务端环境或专用秘密管理方案中。
 
 推荐使用 `docker-compose.database-file.yml`，把宿主秘密文件只读挂载到 `/run/secrets/database_url`。该文件只包含一行 URI，无引号、无变量名，并应限制为仅管理员可读。应用不会记录连接串；数据库不可用时 `/api/health` 返回 `503`。
 
+iKuai 动态拓扑同样推荐使用 `docker-compose.ikuai.yml`。在 iKuai Web 管理界面的 **系统 > 认证 > API Token** 创建专用 Token，将其单独保存到宿主 `IKUAI_TOKEN_FILE_PATH` 指定的文件。文件只包含一行 Token，不加引号、变量名或其他说明；结尾换行可有可无。覆盖文件会只读挂载到 `/run/secrets/ikuai_token`，并自动将 `IKUAI_TOKEN_FILE` 指向该路径。直接使用 `IKUAI_TOKEN` 时，Token 会出现在容器检查信息中，不适合长期部署。两种方式不能同时设置。
+
+`IKUAI_BASE_URL` 和 Token 只由服务端读取，不会保存到 PostgreSQL、返回给浏览器或进入 JSON 导出。应用固定访问 `/api/v4.0/monitoring/system`、`clients-online`、`downstream` 和 `interfaces-physical` 只读端点，不接受 API 重定向。默认会严格校验 HTTPS 证书；仅在确认目标是可信内网路由器且无法配置有效证书时，才启用 `IKUAI_ALLOW_INSECURE_TLS`。
+
 启用 Basic Auth 后，除 `/api/health` 外的页面和 API 都需要登录。Basic Auth 仅编码凭据而不加密传输，因此必须同时使用 HTTPS。如果密码包含 Compose 插值字符（例如 `$`），请按 Compose `.env` 语法使用单引号或正确转义。
 
 服务目录中的图标由 Express 根据数据库内每个服务的内网 `url` 访问目标页面，并解析页面声明的 favicon，包括页面明确引用的公网 HTTPS CDN 图标。图标由服务端代理，浏览器不会直接访问该第三方地址；切换到外网模式也不会改变用于发现图标的内网 `url`。
 
-抓取会限制总超时、响应大小和候选数，并根据实际字节判断图片类型。跨域图标只允许 HTTPS 默认端口，DNS 解析结果必须全部是公网地址，实际连接会固定到已校验地址；每个候选地址的重定向必须保持在该候选自身的 origin。由于服务页面能够指定第三方图标主机，只应配置可信页面，并注意第三方会看到 NAS 的出口 IP。`SERVICE_ICON_ALLOW_INSECURE_TLS` 默认必须保持 `false`。只有可信家庭内网服务使用自签名或已过期证书时，才可设为 `true`；该选项只影响服务页面和与它同源的图标，跨域 HTTPS 图标仍会严格校验证书。该选项不影响浏览器访问控制台所用的 HTTPS，也不改变 HTTP/TCP 状态检查设置。
+抓取会限制总超时、响应大小和候选数，并根据实际字节判断图片类型。跨域图标只允许 HTTPS 默认端口，DNS 解析结果必须全部是公网地址，实际连接会固定到已校验地址；每个候选地址的重定向必须保持在该候选自身的 origin。由于服务页面能够指定第三方图标主机，只应配置可信页面，并注意第三方会看到 NAS 的出口 IP。
+
+严格 TLS 校验是默认行为。可信家庭内网设备使用自签名、过期或与 IP 地址不匹配的证书时，可在该服务的编辑窗口打开“允许自签名 HTTPS 图标”，对应 `iconAllowInsecureTls: true`。该选项只影响这一个服务页面及其同源图标；跨域 HTTPS 图标仍会严格校验证书。`SERVICE_ICON_ALLOW_INSECURE_TLS=true` 是兼容旧部署的全局覆盖项，会对所有服务生效，通常不应使用。两种设置都不影响浏览器访问控制台所用的 HTTPS，也不改变 HTTP/TCP 状态检查设置。
 
 ## 应用配置结构
 
@@ -58,6 +71,7 @@
   "settings": {
     "title": "HomeLab Console",
     "location": "Home network",
+    "hostDisplayName": "Synology DS920+",
     "refreshInterval": 5000
   },
   "services": [
@@ -69,6 +83,7 @@
       "externalUrl": "https://nas.example.com",
       "category": "基础设施",
       "icon": "server",
+      "iconAllowInsecureTls": false,
       "favorite": true,
       "check": {
         "type": "none"
@@ -76,6 +91,8 @@
     }
   ],
   "topology": {
+    "source": "manual",
+    "refreshInterval": 15000,
     "nodes": [
       {
         "id": "nas",
@@ -107,6 +124,7 @@
 | --- | --- | --- |
 | `url` | 是 | 内网导航地址，也供服务端获取真实图标，并作为未单独配置 HTTP 检测地址时的目标 |
 | `externalUrl` | 否 | 互联网导航地址；为空或省略时，外网模式下该服务入口不可用，不会回退到内网地址 |
+| `iconAllowInsecureTls` | 否 | 默认 `false`；仅为此服务页面及同源图标跳过 HTTPS 证书校验，限可信内网的自签名设备使用 |
 
 两个地址只允许使用完整的 `http://` 或 `https://` URL。互联网地址建议使用 HTTPS，并且不要在 URL 中放置密码、Token 或其他秘密，因为页面配置可以通过 API 读取和导出。
 
@@ -143,9 +161,22 @@ TCP 检查：
 
 状态检查从 Express 容器发出。HTTP 检查未填写 `check.url` 时始终使用服务的内网 `url`，不会随浏览器切换到 `externalUrl`；显式填写 `check.url` 时则使用该固定地址。目标地址必须能从容器网络访问，并应避免把检查功能开放给不可信用户，否则可能被用于探测家庭内网。
 
+### `topology`
+
+| 字段 | 类型 | 说明 |
+| --- | --- | --- |
+| `source` | `manual` \| `ikuai` | `manual` 使用 JSON 中保存的节点和链路；`ikuai` 从服务端部署环境配置的 iKuai v4 API 读取 |
+| `refreshInterval` | integer | iKuai 拓扑刷新间隔，单位毫秒，允许 `5000` 到 `300000` |
+| `nodes` | array | 手工拓扑节点；iKuai 不可用时仍作为回退内容 |
+| `links` | array | 手工拓扑链路；iKuai 不可用时仍作为回退内容 |
+
+在“系统设置 > 拓扑数据源”选择 iKuai 并保存后，拓扑页会按刷新间隔请求服务端。服务端根据 iKuai 的系统信息、下游设备、在线终端、上联 MAC 和物理接口自动生成分层拓扑，不会把 Token 交给浏览器。iKuai 没有配置、Token 失效、接口不可达或响应异常时，页面会显示回退状态并继续使用 `nodes` 和 `links`，其他页面不受影响。
+
+动态模式需要运行容器能够访问路由器地址。路由器固件必须提供 v4 监控 API；菜单名称和返回字段可能随版本变化。不要在 `IKUAI_BASE_URL` 中嵌入账号或 Token，也不要把 Token 填入页面配置。
+
 ### `topology.nodes[]`
 
-支持的节点类型：`internet`、`router`、`nas`、`server`、`vm`、`container`、`client`。
+支持的节点类型：`internet`、`router`、`nas`、`server`、`vm`、`container`、`client`、`switch`、`ap`、`camera`、`printer`。
 
 - `id`：拓扑内唯一标识。
 - `label`：界面显示名称。
@@ -162,7 +193,7 @@ TCP 检查：
 }
 ```
 
-`source` 与 `target` 应对应节点 ID。拓扑是显式配置，不会主动扫描局域网。
+`source` 与 `target` 应对应节点 ID。手工模式不会主动扫描局域网；iKuai 模式只读取路由器已经维护的设备和在线终端信息，不会从应用容器发起任意网段扫描。
 
 ## 数据迁移
 

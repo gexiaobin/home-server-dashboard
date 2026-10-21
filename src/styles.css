@@ -860,6 +860,8 @@ a {
   width: min(1540px, 100%);
   margin: 0 auto;
   padding: 32px;
+  container-name: overview;
+  container-type: inline-size;
 }
 
 .overview-heading {
@@ -1633,6 +1635,27 @@ a {
   font-weight: 600;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+@container overview (max-width: 1080px) {
+  .overview-telemetry {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .overview-telemetry > div:nth-child(3) {
+    border-top: 1px solid var(--border);
+    border-left: 0;
+  }
+
+  .overview-telemetry > div:nth-child(4) {
+    border-top: 1px solid var(--border);
+  }
+
+  .overview-telemetry .cpu-load-detail > span {
+    overflow: visible;
+    text-overflow: clip;
+    white-space: normal;
+  }
 }
 
 /* Services */
@@ -2539,6 +2562,67 @@ a {
   font-size: 10px;
 }
 
+.topology-source {
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding-left: 18px;
+  border-left: 1px solid var(--border);
+}
+
+.topology-source > .status-dot {
+  flex: 0 0 6px;
+}
+
+.topology-source > div {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.topology-source strong,
+.topology-source small {
+  overflow: hidden;
+  font-size: 10px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.topology-source small {
+  color: var(--text-muted);
+  font-family: var(--mono);
+}
+
+.topology-source.is-live strong {
+  color: var(--green);
+}
+
+.topology-source.is-fallback strong {
+  color: var(--red);
+}
+
+.topology-throughput {
+  display: flex;
+  align-items: center;
+  gap: 13px;
+  color: var(--text-secondary);
+  font-family: var(--mono);
+  font-size: 10px;
+  white-space: nowrap;
+}
+
+.topology-throughput span {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+}
+
+.topology-throughput svg {
+  color: var(--cyan);
+}
+
 .topology-legend {
   display: flex;
   align-items: center;
@@ -2581,13 +2665,51 @@ a {
   display: flex;
 }
 
+.topology-canvas {
+  min-width: 0;
+  min-height: 0;
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+}
+
+.topology-notice {
+  min-height: 42px;
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  padding: 7px 14px;
+  color: #ffd3a3;
+  background: #2b2017;
+  border-bottom: 1px solid #71502f;
+  font-size: 10px;
+  line-height: 1.45;
+  text-align: center;
+}
+
+.topology-notice svg {
+  flex: 0 0 auto;
+  color: #ffae57;
+}
+
 .topology-viewport {
   min-width: 0;
+  min-height: 0;
   flex: 1;
-  overflow: hidden;
+  overflow: auto;
+  overscroll-behavior: contain;
+  scrollbar-gutter: stable;
   background-color: #0a0d0f;
   background-image: radial-gradient(#31383d 0.7px, transparent 0.7px);
   background-size: 18px 18px;
+}
+
+.topology-stage {
+  position: relative;
+  min-width: 100%;
+  min-height: 100%;
 }
 
 .topology-grid {
@@ -2595,7 +2717,7 @@ a {
   width: 100%;
   height: 100%;
   min-height: 540px;
-  transform-origin: center center;
+  transform-origin: top left;
   transition: transform 180ms ease;
 }
 
@@ -2622,7 +2744,7 @@ a {
 
 .topology-node {
   position: absolute;
-  width: 132px;
+  width: 148px;
   min-height: 56px;
   display: flex;
   align-items: center;
@@ -2882,6 +3004,16 @@ a {
 .settings-save {
   align-self: end;
   justify-self: end;
+}
+
+.settings-field-wide {
+  grid-column: 1 / -1;
+}
+
+.settings-field-wide small {
+  color: var(--text-muted);
+  font-size: 9px;
+  line-height: 1.5;
 }
 
 .field {
@@ -3149,6 +3281,18 @@ a {
   cursor: pointer;
 }
 
+.service-option-list {
+  margin-top: 16px;
+}
+
+.service-option-list .toggle-row {
+  margin-top: 0;
+}
+
+.service-option-list .toggle-row + .toggle-row {
+  border-top: 1px solid var(--border);
+}
+
 .toggle-row input {
   position: absolute;
   opacity: 0;
@@ -3392,6 +3536,18 @@ a {
   .monitor-grid {
     grid-template-columns: minmax(0, 1.55fr) minmax(270px, 0.85fr);
   }
+
+  .topology-toolbar {
+    gap: 16px;
+  }
+
+  .topology-throughput {
+    margin-left: auto;
+  }
+
+  .topology-legend {
+    display: none;
+  }
 }
 
 @media (max-width: 1080px) {
@@ -3588,15 +3744,16 @@ a {
   }
 
   .node-inspector {
-    position: absolute;
-    z-index: 5;
-    right: 10px;
-    bottom: 10px;
+    position: static;
+    z-index: auto;
     width: 272px;
-    max-height: calc(100% - 20px);
-    border: 1px solid var(--border-strong);
-    border-radius: 4px;
-    box-shadow: 0 14px 38px #00000085;
+    flex-basis: 272px;
+    max-height: none;
+    border-top: 0;
+    border-right: 0;
+    border-bottom: 0;
+    border-radius: 0;
+    box-shadow: none;
   }
 }
 
@@ -3789,6 +3946,7 @@ a {
 
   .topology-toolbar {
     min-height: 52px;
+    flex-wrap: wrap;
     gap: 10px;
     padding: 7px 10px;
   }
@@ -3802,23 +3960,40 @@ a {
     margin-left: auto;
   }
 
+  .topology-source {
+    min-width: 0;
+    flex: 1;
+    padding-left: 10px;
+  }
+
+  .topology-throughput {
+    order: 4;
+    width: 100%;
+    margin-left: 0;
+    padding-top: 7px;
+    border-top: 1px solid var(--border);
+  }
+
   .topology-grid {
     width: 820px;
     min-height: 560px;
     transform-origin: top left;
   }
 
-  .topology-viewport {
-    overflow: auto;
-    overscroll-behavior: contain;
+  .topology-workspace.has-inspector {
+    flex-direction: column;
   }
 
   .node-inspector {
-    right: 8px;
-    bottom: 8px;
-    left: 8px;
-    width: auto;
-    max-height: 65%;
+    position: static;
+    z-index: auto;
+    width: 100%;
+    max-height: 320px;
+    flex: 0 0 42%;
+    border: 0;
+    border-top: 1px solid var(--border-strong);
+    border-radius: 0;
+    box-shadow: 0 -10px 26px #00000052;
   }
 
   .settings-form,
@@ -3957,6 +4132,10 @@ a {
 
   .search-box {
     width: 116px;
+  }
+
+  .topology-summary {
+    display: none;
   }
 
   .overview-heading h2 {
@@ -4164,6 +4343,10 @@ a {
   --metric-dim: var(--surface-active);
 }
 
+.monitor-metric.is-meterless .monitor-metric-reading strong {
+  font-size: 20px;
+}
+
 .monitor-metric-heading {
   display: grid;
   grid-template-columns: 30px minmax(0, 1fr) auto;
@@ -4283,6 +4466,7 @@ a {
 .monitor-grid {
   display: grid;
   grid-template-columns: repeat(12, minmax(0, 1fr));
+  align-items: start;
   gap: 10px;
 }
 
@@ -4442,6 +4626,30 @@ a {
   white-space: nowrap;
 }
 
+.load-state {
+  display: inline-flex;
+  width: fit-content;
+  margin-top: 7px;
+  padding: 2px 5px;
+  color: var(--accent);
+  background: var(--accent-dim);
+  border-radius: 2px;
+  font-family: var(--mono);
+  font-size: 8px;
+  font-style: normal;
+  font-weight: 650;
+}
+
+.load-state.is-warning {
+  color: var(--amber);
+  background: var(--amber-dim);
+}
+
+.load-state.is-danger {
+  color: var(--red);
+  background: var(--red-dim);
+}
+
 .host-loads strong {
   display: block;
   margin-top: 6px;
@@ -4500,9 +4708,118 @@ a {
   white-space: nowrap;
 }
 
+.storage-panel {
+  grid-column: 1 / -1;
+}
+
+.storage-total {
+  color: var(--text-muted);
+  font-family: var(--mono);
+  font-size: 9px;
+  white-space: nowrap;
+}
+
+.storage-list {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+  border-top: 1px solid var(--border);
+}
+
+.storage-row {
+  min-width: 0;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 10px 14px;
+  padding: 14px;
+  border-left: 1px solid var(--border);
+}
+
+.storage-row:first-child {
+  padding-left: 0;
+  border-left: 0;
+}
+
+.storage-identity {
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 9px;
+}
+
+.storage-identity > span {
+  width: 30px;
+  height: 30px;
+  flex: 0 0 30px;
+  display: grid;
+  place-items: center;
+  color: var(--amber);
+  background: var(--amber-dim);
+  border: 1px solid #665020;
+  border-radius: 3px;
+}
+
+.storage-identity > div,
+.storage-usage {
+  min-width: 0;
+}
+
+.storage-identity strong,
+.storage-identity small,
+.storage-usage strong,
+.storage-usage span {
+  display: block;
+}
+
+.storage-identity strong {
+  overflow: hidden;
+  color: var(--text);
+  font-size: 10px;
+  font-weight: 650;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.storage-identity small,
+.storage-usage span,
+.storage-free {
+  color: var(--text-muted);
+  font-family: var(--mono);
+  font-size: 8px;
+}
+
+.storage-identity small {
+  margin-top: 4px;
+}
+
+.storage-usage {
+  text-align: right;
+}
+
+.storage-usage strong {
+  color: var(--text);
+  font-family: var(--mono);
+  font-size: 15px;
+}
+
+.storage-usage span {
+  margin-top: 4px;
+  white-space: nowrap;
+}
+
+.storage-row .monitor-meter {
+  margin-top: 0;
+}
+
+.storage-free {
+  text-align: right;
+  white-space: nowrap;
+}
+
 .network-panel {
   grid-column: span 5;
-  min-height: 308px;
+  height: 370px;
+  display: flex;
+  flex-direction: column;
 }
 
 .network-rates {
@@ -4542,7 +4859,8 @@ a {
 }
 
 .network-chart-wrap {
-  height: 144px;
+  min-height: 160px;
+  flex: 1;
   margin-top: 8px;
 }
 
@@ -4571,7 +4889,9 @@ a {
 
 .container-panel {
   grid-column: span 7;
-  min-height: 308px;
+  height: 370px;
+  display: flex;
+  flex-direction: column;
   padding-bottom: 10px;
 }
 
@@ -4589,7 +4909,12 @@ a {
 }
 
 .container-list {
+  min-height: 0;
+  flex: 1;
+  overflow-y: auto;
   border-top: 1px solid var(--border);
+  scrollbar-color: var(--border-strong) transparent;
+  scrollbar-width: thin;
 }
 
 .container-row {
@@ -4686,6 +5011,20 @@ a {
   .host-panel {
     min-height: 0;
   }
+
+  .network-panel,
+  .container-panel {
+    height: auto;
+  }
+
+  .network-chart-wrap {
+    height: 220px;
+    flex: none;
+  }
+
+  .container-list {
+    max-height: 390px;
+  }
 }
 
 @media (max-width: 700px) {
@@ -4768,6 +5107,21 @@ a {
     font-size: 8px;
   }
 
+  .storage-list {
+    grid-template-columns: 1fr;
+  }
+
+  .storage-row,
+  .storage-row:first-child {
+    padding: 12px 0;
+    border-top: 1px solid var(--border);
+    border-left: 0;
+  }
+
+  .storage-row:first-child {
+    border-top: 0;
+  }
+
   .container-row {
     grid-template-columns: 34px minmax(0, 1fr) auto;
     padding: 8px 0;
@@ -4835,7 +5189,7 @@ a {
 
   .host-loads > div {
     display: grid;
-    grid-template-columns: minmax(48px, 0.7fr) 40px minmax(64px, 1fr) auto;
+    grid-template-columns: minmax(80px, 0.9fr) 48px minmax(100px, 1.2fr) auto;
     align-items: center;
     gap: 7px;
     border-top: 1px solid var(--border);
@@ -4847,8 +5201,8 @@ a {
   }
 
   .host-loads strong,
-  .host-loads .monitor-meter,
-  .host-loads small {
+  .host-loads small,
+  .host-loads .load-state {
     margin-top: 0;
   }
 
@@ -4884,4 +5238,5 @@ a {
   .network-rates {
     grid-template-columns: 1fr;
   }
+
 }

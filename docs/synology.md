@@ -20,10 +20,11 @@
 /volume1/docker/home-server-dashboard/
 |-- data/
 `-- secrets/
-    `-- database_url
+    |-- database_url
+    `-- ikuai_token        # 可选，仅启用 iKuai 动态拓扑时创建
 ```
 
-将仓库中的 `docker-compose.yml`、`docker-compose.database-file.yml` 和 `.env.example` 放入 `home-server-dashboard` 目录，并把 `.env.example` 复制为 `.env`。`secrets/database_url` 只写一行 PostgreSQL URI，不加引号。至少检查这些值：
+将仓库中的 `docker-compose.yml`、`docker-compose.database-file.yml` 和 `.env.example` 放入 `home-server-dashboard` 目录；需要动态拓扑时同时放入 `docker-compose.ikuai.yml`。把 `.env.example` 复制为 `.env`。`secrets/database_url` 只写一行 PostgreSQL URI，不加引号。至少检查这些值：
 
 ```dotenv
 DASHBOARD_IMAGE=ghcr.io/gexiaobin/home-server-dashboard:latest
@@ -35,8 +36,15 @@ DATABASE_URL_FILE=
 DATABASE_URL_FILE_PATH=/volume1/docker/home-server-dashboard/secrets/database_url
 DATA_PATH=/volume1/docker/home-server-dashboard/data
 HOST_STORAGE_PATH=/volume1
-HOST_DISPLAY_NAME=Synology DS920+
+HOST_STORAGE_PATH_2=/volume2
+HOST_STORAGE_PATH_3=/volume3
 DOCKER_API_TIMEOUT_MS=3000
+IKUAI_BASE_URL=
+IKUAI_TOKEN=
+IKUAI_TOKEN_FILE=
+IKUAI_TOKEN_FILE_PATH=/volume1/docker/home-server-dashboard/secrets/ikuai_token
+IKUAI_TIMEOUT_MS=5000
+IKUAI_ALLOW_INSECURE_TLS=false
 TZ=Asia/Shanghai
 SERVICE_CHECK_TIMEOUT_MS=5000
 SERVICE_ICON_TIMEOUT_MS=5000
@@ -45,9 +53,9 @@ BASIC_AUTH_USERNAME=
 BASIC_AUTH_PASSWORD=
 ```
 
-生产环境建议将镜像改成明确版本，例如 `:1.0.0`，避免 `latest` 自动变化。不要把实际 URI 写入 Compose、`.env`、README 或截图；数据库应使用专用账号，不要长期使用 `postgres` 超级用户。
+生产环境建议将镜像改成明确版本，例如 `:1.0.0`，避免 `latest` 自动变化。不要把实际数据库 URI 或 iKuai Token 写入 Compose、`.env`、README 或截图；数据库应使用专用账号，不要长期使用 `postgres` 超级用户。
 
-服务目录会从每个服务的内网 `url` 发现页面声明的真实 favicon，并支持页面明确引用的公网 HTTPS CDN 图标。图标始终由容器代理获取；切换到外网模式不会让容器改为从 `externalUrl` 发现图标。跨域图标只允许 HTTPS 默认端口，DNS 结果必须是公网地址，且第三方图标主机会看到 NAS 的出口 IP，因此只应配置可信的服务页面。`SERVICE_ICON_ALLOW_INSECURE_TLS` 应保持默认的 `false`；只有可信家庭内网服务使用自签名或已过期 HTTPS 证书、导致图标无法加载时，才改为 `true` 后重建容器。该设置仅对服务页面及其同源图标生效；跨域 HTTPS 图标仍会校验证书。
+服务目录会从每个服务的内网 `url` 发现页面声明的真实 favicon，并支持页面明确引用的公网 HTTPS CDN 图标。图标始终由容器代理获取；切换到外网模式不会让容器改为从 `externalUrl` 发现图标。跨域图标只允许 HTTPS 默认端口，DNS 结果必须是公网地址，且第三方图标主机会看到 NAS 的出口 IP，因此只应配置可信的服务页面。全局 `SERVICE_ICON_ALLOW_INSECURE_TLS` 应保持默认的 `false`；可信内网设备使用自签名或过期 HTTPS 证书时，在服务编辑窗口只为该服务打开“允许自签名 HTTPS 图标”。跨域 HTTPS 图标始终校验证书。
 
 ## 3. 目录权限
 
@@ -60,14 +68,14 @@ sudo chmod 700 /volume1/docker/home-server-dashboard/secrets
 sudo chmod 400 /volume1/docker/home-server-dashboard/secrets/database_url
 ```
 
-不要对 `/volume1` 或共享文件夹根目录递归执行 `chown`。
+启用 iKuai 动态拓扑后，再为 `secrets/ikuai_token` 使用相同所有者和 `0400` 权限。不要对 `/volume1` 或共享文件夹根目录递归执行 `chown`。
 
 ## 4. 在 Container Manager 创建 Project
 
 1. 打开 **Container Manager > Project**。
 2. 点击 **Create**，项目名填写 `home-server-dashboard`。
 3. Path 选择 `/volume1/docker/home-server-dashboard`。
-4. 若界面只接受一个 Compose 文件，把 `docker-compose.database-file.yml` 中的 `environment` 与 `volumes` 条目合并到主文件；SSH 部署则可同时传入两个 `-f` 文件。
+4. 若界面只接受一个 Compose 文件，把所需覆盖文件中的 `environment` 与 `volumes` 条目合并到主文件：数据库使用 `docker-compose.database-file.yml`，iKuai 使用 `docker-compose.ikuai.yml`，多存储空间使用 `docker-compose.synology-storage.yml`。SSH 部署可同时传入多个 `-f` 文件。
 5. Source 选择最终的 Compose 配置，检查端口、秘密文件挂载和环境变量，完成创建并启动项目。
 6. 在 Container 页面确认 `home-server-dashboard` 状态为 Healthy。
 7. 浏览器打开 `http://NAS-IP:3000`，再访问 `http://NAS-IP:3000/api/health`；返回 `status: ok` 与 `storage: postgresql` 才表示数据库读写链路就绪。
@@ -105,11 +113,43 @@ Destination: http://127.0.0.1:3000
 | `/sys` | `/host/sys` | 网卡和可用的温度传感器 |
 | `/volume1` | `/host/storage` | 存储容量 |
 
-部分群晖机型、DSM 版本或硬件驱动不会在 `/sys` 暴露温度，这时温度为空属于正常降级。若存储卷不是 `/volume1`，修改 `HOST_STORAGE_PATH`。
+部分群晖机型、DSM 版本或硬件驱动不会在 `/sys` 暴露温度。这时监控页会用系统运行时间和容器状态替代温度卡片。若主存储卷不是 `/volume1`，修改 `HOST_STORAGE_PATH`。
+
+三个存储空间的群晖可以额外使用 `docker-compose.synology-storage.yml`。它会继续使用主文件中的 `/volume1`，并把 `/volume2`、`/volume3` 只读映射到独立容器路径：
+
+```bash
+docker compose \
+  -f docker-compose.yml \
+  -f docker-compose.database-file.yml \
+  -f docker-compose.synology-storage.yml \
+  up -d
+```
+
+存储空间数量不同，应复制此覆盖文件并按实际情况增删挂载，不要映射不存在的路径。应用会逐卷展示用量，并在顶部给出所有可见卷的合计。主机显示名称在页面“系统设置”中维护并保存到 PostgreSQL；留空时会自动读取宿主 `/proc` 暴露的 hostname。
 
 若不希望容器看到某类宿主信息，可以删除对应挂载；相关指标会显示为空或不可用。
 
-## 7. Docker Socket：默认禁用
+## 7. iKuai 动态拓扑（可选）
+
+1. 登录 iKuai Web 管理界面，在 **系统 > 认证 > API Token** 创建专用 Token。不同固件的菜单名称可能略有差异；目标版本必须支持 `/api/v4.0/monitoring/*` 接口。如果当前固件支持权限范围，只授予系统监控、在线终端、下游设备和物理接口所需的读取权限。
+2. 将 Token 写入 `/volume1/docker/home-server-dashboard/secrets/ikuai_token`。文件只保留一行 Token，不加引号、变量名或说明文字；结尾换行可有可无。然后将所有者设为容器用户、权限设为 `0400`。
+3. 在 `.env` 设置 `IKUAI_BASE_URL` 为路由器的 HTTP(S) origin，可包含端口，但不能包含账号、密码、路径、查询参数或片段。保持 `IKUAI_TOKEN` 和 `IKUAI_TOKEN_FILE` 为空；覆盖文件会自动设置容器内文件路径。
+4. 保持 `IKUAI_ALLOW_INSECURE_TLS=false`。只有路由器位于可信内网、使用 HTTPS 且确实无法配置有效证书时才改为 `true`。该选项会关闭应用到路由器的证书校验，不能用于公网目标。
+5. 确认 NAS 防火墙、VLAN 和路由规则允许 dashboard 容器访问该路由器地址，然后通过 SSH 部署：
+
+```bash
+docker compose \
+  -f docker-compose.yml \
+  -f docker-compose.database-file.yml \
+  -f docker-compose.ikuai.yml \
+  up -d
+```
+
+多存储空间或 Docker Socket 覆盖文件可以继续追加为其他 `-f` 参数。启动后进入“系统设置 > 拓扑数据源”，选择“iKuai v4 API”、设置刷新间隔并保存。Token 和路由器地址只存在于服务端部署环境，不进入 PostgreSQL 配置或 JSON 导出。
+
+应用只向四类固定监控端点发送带 Bearer Token 的 `GET` 请求，不跟随重定向，并限制超时和响应大小。路由器未配置、Token 无效或 API 暂时不可用时，拓扑页会显示原因并回退到已保存的手工节点与链路；概览、服务目录和系统监控仍可正常使用。
+
+## 8. Docker Socket：默认禁用
 
 展示 Docker 容器列表需要访问 Docker API，但这项权限风险很高。基础 `docker-compose.yml` 没有挂载 Socket，所以“可见容器”默认显示为未启用，而不是容器总数。启用后，应用只调用 `GET /containers/json?all=1`，单次查询受 `DOCKER_API_TIMEOUT_MS` 限制；查询超时或失败时概览接口仍会正常返回，并把容器列表降级为空数组。
 
@@ -124,7 +164,7 @@ docker compose \
 
 群晖上的 Socket 通常由 root 持有，因此可选 override 会显式使用 `user: "0:0"`；这会撤销基础镜像的非 root 保护。`/var/run/docker.sock:/var/run/docker.sock:ro` 中的 `:ro` 只限制文件系统挂载方式，并不会把 Docker API 变为只读。能够调用该 Socket 的进程通常可以控制整台 Docker 主机。推荐在控制台与 Docker Socket 之间部署最小权限 Socket Proxy，只允许应用实际需要的 `GET /containers/json` 等查询端点，并让控制台继续以 UID 1000 运行。Docker 官方安全说明：[Protect the Docker daemon socket](https://docs.docker.com/engine/security/protect-access/)。
 
-## 8. 升级与回滚
+## 9. 升级与回滚
 
 使用 SSH 时：
 
@@ -135,13 +175,13 @@ docker compose -f docker-compose.yml -f docker-compose.database-file.yml up -d
 docker compose -f docker-compose.yml -f docker-compose.database-file.yml ps
 ```
 
-在 Container Manager 中，也可以进入 Project 后重新拉取镜像并重建。升级前记录当前镜像标签；发生问题时，将 `DASHBOARD_IMAGE` 改回旧版本标签后再次部署。
+在 Container Manager 中，也可以进入 Project 后重新拉取镜像并重建。升级时应沿用当前启用的所有覆盖文件；启用了 iKuai 动态拓扑时，需要继续加入 `-f docker-compose.ikuai.yml`。升级前记录当前镜像标签；发生问题时，将 `DASHBOARD_IMAGE` 改回旧版本标签后再次部署。
 
 从单一服务地址版本升级时无需修改 Compose、环境变量或 PostgreSQL 表结构。旧配置中的 `url` 会继续作为内网地址使用，应用会兼容缺少 `externalUrl` 的 JSONB 文档。升级后的默认模式是内网；部署完成后可在服务编辑页逐项填写互联网地址。
 
-## 9. 备份与恢复
+## 10. 备份与恢复
 
-页面配置的权威数据源是 PostgreSQL。使用 PostgreSQL 自带备份工具或现有数据库备份任务定期执行 `pg_dump`，同时安全备份 `.env` 和 `secrets/database_url`。`data/config.json` 仅是旧版本迁移来源，不再是 PostgreSQL 模式的权威数据。不要依赖容器可写层保存数据。
+页面配置的权威数据源是 PostgreSQL。使用 PostgreSQL 自带备份工具或现有数据库备份任务定期执行 `pg_dump`，同时安全备份 `.env`、`secrets/database_url` 和可选的 `secrets/ikuai_token`。`data/config.json` 仅是旧版本迁移来源，不再是 PostgreSQL 模式的权威数据。不要依赖容器可写层保存数据。
 
 恢复时：
 
@@ -152,7 +192,7 @@ docker compose -f docker-compose.yml -f docker-compose.database-file.yml ps
 
 群晖官方也建议备份映射到 NAS 的持久化目录：[How do I back up Docker containers?](https://kb.synology.com/en-global/DSM/tutorial/How_do_I_back_up_Docker_containers)。
 
-## 10. 常见问题
+## 11. 常见问题
 
 ### 镜像拉取失败
 
@@ -178,6 +218,14 @@ docker compose -f docker-compose.yml -f docker-compose.database-file.yml ps
 - 确认容器 DNS 能解析目标主机名，并能访问目标 VLAN 和端口。
 - 自签名 HTTPS、ACL、防火墙或目标服务拒绝请求都可能导致检查失败。
 
+### iKuai 拓扑回退到手工数据
+
+- 确认页面“系统设置”已选择“iKuai v4 API”并保存。
+- 确认部署时加入 `docker-compose.ikuai.yml`，且 `.env` 中 `IKUAI_BASE_URL` 只包含路由器 origin。
+- 确认 `secrets/ikuai_token` 是容器用户可读的普通文件，内容只有一行有效 Token；不要同时设置 `IKUAI_TOKEN` 与 `IKUAI_TOKEN_FILE`。
+- 确认路由器固件支持 v4 监控 API，Token 具有相应读取权限，容器网络可以访问路由器。
+- HTTPS 证书错误应优先通过有效证书修复。只有可信内网自签名路由器才使用 `IKUAI_ALLOW_INSECURE_TLS=true`。
+
 ### 外网模式下服务无法打开
 
 - 先在服务编辑页确认已填写完整的 `externalUrl`；未配置时入口会按设计保持禁用。
@@ -188,5 +236,6 @@ docker compose -f docker-compose.yml -f docker-compose.database-file.yml ps
 
 - 图标由容器根据服务配置中的内网 `url` 发现并代理获取，先确认容器能解析并访问服务地址以及页面明确声明的公网 HTTPS 图标主机。
 - 默认抓取超时为 5000 毫秒，可通过 `SERVICE_ICON_TIMEOUT_MS` 调整。
-- 可信内网服务使用自签名或已过期证书时，可将 `SERVICE_ICON_ALLOW_INSECURE_TLS` 设为 `true` 后重建；此设置不会关闭跨域 HTTPS 图标的证书校验。
+- 可信内网服务使用自签名、过期或与 IP 地址不匹配的证书时，在服务编辑窗口打开“允许自签名 HTTPS 图标”。该设置只作用于当前服务，不会关闭跨域 HTTPS 图标的证书校验。
+- `SERVICE_ICON_ALLOW_INSECURE_TLS=true` 会全局覆盖所有服务，仅保留用于兼容旧部署，不建议作为常规修复。
 

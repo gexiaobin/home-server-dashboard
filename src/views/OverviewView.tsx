@@ -40,11 +40,19 @@ export function OverviewView({ config, overview, connected, networkMode, onNavig
   const downServices = config.services.filter((service) => statusById.get(service.id)?.status === 'down');
   const uncheckedCount = config.services.filter((service) => service.check.type === 'none').length;
   const pendingCount = config.services.filter((service) => !statusById.has(service.id)).length;
-  const disk = overview?.disks[0];
+  const storage = overview?.disks.reduce(
+    (total, disk) => ({ used: total.used + disk.used, total: total.total + disk.total }),
+    { used: 0, total: 0 },
+  );
+  const storagePercent = storage && storage.total > 0
+    ? Math.round((storage.used / storage.total) * 100)
+    : null;
   const cpuUsage = overview ? Math.max(0, Math.min(100, Math.round(overview.cpu.usage))) : null;
   const loadAverage = overview?.system.loadAverage.slice(0, 3) ?? [];
   const loadAverageLabel = loadAverage.length
-    ? loadAverage.map((value) => value.toFixed(2)).join(' · ')
+    ? loadAverage.map((value) => overview && overview.cpu.cores > 0
+      ? `${Math.round((value / overview.cpu.cores) * 100)}%`
+      : '--').join(' · ')
     : '--';
   const runningContainerCount = overview?.containers.filter((item) => item.state.toLowerCase() === 'running').length ?? 0;
   const date = new Intl.DateTimeFormat('zh-CN', {
@@ -149,7 +157,7 @@ export function OverviewView({ config, overview, connected, networkMode, onNavig
             <div className="environment-metrics">
               <div><b>{overview ? `${Math.round(overview.cpu.usage)}%` : '--'}</b><span>CPU</span></div>
               <div><b>{overview ? `${Math.round(overview.memory.percent)}%` : '--'}</b><span>内存</span></div>
-              <div><b>{disk ? `${Math.round(disk.percent)}%` : '--'}</b><span>存储</span></div>
+              <div><b>{storagePercent === null ? '--' : `${storagePercent}%`}</b><span>存储</span></div>
             </div>
             <button className="button button-primary" onClick={() => onNavigate('monitor')}><Activity size={15} /> 查看系统监控</button>
           </div>
@@ -209,7 +217,7 @@ export function OverviewView({ config, overview, connected, networkMode, onNavig
             <i style={{ width: `${cpuUsage ?? 0}%` }} />
           </span>
           <small className="cpu-load-detail">
-            <span>1 / 5 / 15 分钟负载</span>
+            <span>1 / 5 / 15 分钟核心负载率</span>
             <b>{loadAverageLabel}</b>
           </small>
         </div>

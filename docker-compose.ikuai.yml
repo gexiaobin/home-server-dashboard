@@ -1,0 +1,7 @@
+services:
+  dashboard:
+    environment:
+      IKUAI_TOKEN: ""
+      IKUAI_TOKEN_FILE: /run/secrets/ikuai_token
+    volumes:
+      - ${IKUAI_TOKEN_FILE_PATH:-./secrets/ikuai_token}:/run/secrets/ikuai_token:ro

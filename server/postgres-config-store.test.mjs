@@ -82,7 +82,7 @@ describe('PostgresConfigStore', () => {
         id: 'nas',
         name: 'NAS',
         url: 'https://nas.local',
-        externalUrl: 'https://nas.example.com',
+        externalUrl: 'https://nas.example.com/dsm?launch=files#shared',
       }],
       topology: { nodes: [{ id: 'nas', label: 'NAS' }], links: [] },
     };
@@ -93,8 +93,34 @@ describe('PostgresConfigStore', () => {
     expect(saved.services[0]).toMatchObject({
       category: '其他',
       check: { type: 'none' },
-      externalUrl: 'https://nas.example.com',
+      externalUrl: input.services[0].externalUrl,
     });
+    expect((await store.get()).services[0].externalUrl).toBe(input.services[0].externalUrl);
+    expect(pool.readDocument().services[0].externalUrl).toBe(input.services[0].externalUrl);
+  });
+
+  it('does not store iKuai deployment secrets inside PostgreSQL JSONB', async () => {
+    const dataDir = await createTemporaryDirectory();
+    const pool = createPool();
+    const store = createStore(pool, dataDir);
+
+    const saved = await store.put({
+      topology: {
+        source: 'ikuai',
+        refreshInterval: 30_000,
+        baseUrl: 'http://router.invalid',
+        token: 'must-not-be-persisted',
+      },
+    });
+
+    expect(saved.topology).toEqual({
+      source: 'ikuai',
+      refreshInterval: 30_000,
+      nodes: [],
+      links: [],
+    });
+    expect(JSON.stringify(pool.readDocument())).not.toContain('must-not-be-persisted');
+    expect(JSON.stringify(pool.readDocument())).not.toContain('router.invalid');
   });
 
   it('normalizes legacy PostgreSQL services without rewriting the stored document', async () => {
@@ -113,6 +139,7 @@ describe('PostgresConfigStore', () => {
       id: 'nas',
       url: 'https://nas.home.arpa:5001',
       externalUrl: '',
+      iconAllowInsecureTls: false,
     });
     expect(pool.readDocument()).toEqual(legacyDocument);
   });

@@ -1,4 +1,4 @@
-import type { AppConfig, Overview, ServiceHealth } from './types';
+import type { AppConfig, Overview, ServiceHealth, TopologySnapshot } from './types';
 
 async function request<T>(path: string, options?: RequestInit): Promise<T> {
   const response = await fetch(path, {
@@ -23,6 +23,7 @@ export const api = {
     body: JSON.stringify(config),
   }),
   getOverview: () => request<Overview>('/api/overview'),
+  getTopology: () => request<TopologySnapshot>('/api/topology'),
   checkService: (id: string) => request<ServiceHealth>(`/api/services/${encodeURIComponent(id)}/check`, {
     method: 'POST',
   }),

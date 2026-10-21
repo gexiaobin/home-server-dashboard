@@ -467,7 +467,8 @@ export function createServiceIconFetcher({
 
   return async function fetchServiceIcon(service) {
     const normalizedUrl = parseHttpUrl(service?.url).toString();
-    const key = `${String(service?.id || '')}\n${normalizedUrl}`;
+    const allowServiceInsecureTls = allowInsecureTls || service?.iconAllowInsecureTls === true;
+    const key = `${String(service?.id || '')}\n${normalizedUrl}\n${allowServiceInsecureTls ? 'insecure' : 'strict'}`;
     const cached = cache.get(key);
     if (cached && cached.expiresAt > now()) {
       cache.delete(key);
@@ -478,7 +479,10 @@ export function createServiceIconFetcher({
     if (cached) deleteCachedResult(key);
     if (inflight.has(key)) return inflight.get(key);
 
-    const pending = resolver(normalizedUrl, { allowInsecureTls, timeoutMs })
+    const pending = resolver(normalizedUrl, {
+      allowInsecureTls: allowServiceInsecureTls,
+      timeoutMs,
+    })
       .then((result) => {
         cacheResult(key, { result, expiresAt: now() + positiveTtlMs });
         return result;

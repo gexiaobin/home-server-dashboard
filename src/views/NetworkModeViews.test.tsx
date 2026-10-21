@@ -16,14 +16,17 @@ const service: Service = {
   externalUrl: 'https://vault.example.com',
   category: '安全',
   icon: 'shield',
+  iconAllowInsecureTls: false,
   favorite: true,
   check: { type: 'none' },
 };
 
 const config: AppConfig = {
-  settings: { title: 'HomeLab', location: 'Home', refreshInterval: 5000 },
+  settings: { title: 'HomeLab', location: 'Home', hostDisplayName: '', refreshInterval: 5000 },
   services: [service],
   topology: {
+    source: 'manual',
+    refreshInterval: 15_000,
     nodes: [{ id: 'vault', label: 'Vault', type: 'container', serviceId: service.id, x: 50, y: 50 }],
     links: [],
   },

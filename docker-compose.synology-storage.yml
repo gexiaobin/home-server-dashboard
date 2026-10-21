@@ -1,0 +1,7 @@
+services:
+  dashboard:
+    environment:
+      HOST_STORAGE: /host/storage,/host/storage/volume2,/host/storage/volume3
+    volumes:
+      - ${HOST_STORAGE_PATH_2:-/volume2}:/host/storage/volume2:ro
+      - ${HOST_STORAGE_PATH_3:-/volume3}:/host/storage/volume3:ro

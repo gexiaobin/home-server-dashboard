@@ -64,6 +64,20 @@ describe('parseIconCandidates', () => {
     ]);
   });
 
+  it('resolves an ESXi-style relative SVG from the configured UI directory', () => {
+    const html = `
+      <meta name="description" content="ESXi Host Client">
+      <link rel="icon" type="image/x-icon" href="favicon.svg">
+      <link rel="apple-touch-icon" href="apple-touch-icon.png">
+    `;
+
+    expect(parseIconCandidates(html, 'https://esxi.home.arpa/ui/')).toEqual([
+      'https://esxi.home.arpa/ui/favicon.svg',
+      'https://esxi.home.arpa/ui/apple-touch-icon.png',
+      'https://esxi.home.arpa/favicon.ico',
+    ]);
+  });
+
   it('only retains secure default-port icons from a different origin', () => {
     const html = `
       <link rel="icon" href="data:image/png;base64,AAAA">
@@ -420,7 +434,7 @@ describe('requestServiceResource', () => {
 });
 
 describe('createServiceIconFetcher', () => {
-  it('deduplicates concurrent work and keys the cache by id plus URL', async () => {
+  it('discovers from the internal URL and keys the cache by id plus internal URL', async () => {
     const resolver = vi.fn(async () => ({ body: PNG, contentType: 'image/png', etag: '"png"' }));
     const fetchIcon = createServiceIconFetcher({ resolver });
     const service = {
@@ -434,6 +448,10 @@ describe('createServiceIconFetcher', () => {
     await fetchIcon(service);
     expect(resolver).toHaveBeenCalledTimes(1);
     expect(resolver).toHaveBeenCalledWith(new URL(service.url).toString(), expect.any(Object));
+    expect(resolver).not.toHaveBeenCalledWith(
+      new URL(service.externalUrl).toString(),
+      expect.anything(),
+    );
 
     await fetchIcon({ ...service, externalUrl: 'https://other.example.test' });
     expect(resolver).toHaveBeenCalledTimes(1);
@@ -450,5 +468,39 @@ describe('createServiceIconFetcher', () => {
     await expect(fetchIcon(service)).rejects.toBeInstanceOf(ServiceIconNotFoundError);
     await expect(fetchIcon(service)).rejects.toBeInstanceOf(ServiceIconNotFoundError);
     expect(resolver).toHaveBeenCalledTimes(1);
+  });
+
+  it('uses and caches the per-service insecure TLS opt-in independently', async () => {
+    const resolver = vi.fn(async () => ({ body: PNG, contentType: 'image/png', etag: '"png"' }));
+    const fetchIcon = createServiceIconFetcher({ resolver });
+    const service = {
+      id: 'nas',
+      url: 'https://nas.home.arpa:5001',
+      iconAllowInsecureTls: false,
+    };
+
+    await fetchIcon(service);
+    await fetchIcon({ ...service, iconAllowInsecureTls: true });
+    await fetchIcon({ ...service, iconAllowInsecureTls: true });
+
+    expect(resolver).toHaveBeenCalledTimes(2);
+    expect(resolver.mock.calls[0][1]).toMatchObject({ allowInsecureTls: false });
+    expect(resolver.mock.calls[1][1]).toMatchObject({ allowInsecureTls: true });
+  });
+
+  it('keeps the deployment-wide insecure TLS option as an explicit override', async () => {
+    const resolver = vi.fn(async () => ({ body: PNG, contentType: 'image/png', etag: '"png"' }));
+    const fetchIcon = createServiceIconFetcher({ allowInsecureTls: true, resolver });
+
+    await fetchIcon({
+      id: 'nas',
+      url: 'https://nas.home.arpa:5001',
+      iconAllowInsecureTls: false,
+    });
+
+    expect(resolver).toHaveBeenCalledWith(
+      'https://nas.home.arpa:5001/',
+      expect.objectContaining({ allowInsecureTls: true }),
+    );
   });
 });

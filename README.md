@@ -9,7 +9,7 @@
 - 真实服务图标：由服务端根据服务的内网 URL 解析目标页面声明的 favicon，包括页面明确引用的公网 HTTPS CDN 图标，加载失败时自动回退。
 - 状态检查：支持 HTTP、TCP 和不探测三种模式。
 - 主机概览：CPU、内存、磁盘、网络与温度指标。
-- 网络拓扑：维护路由器、NAS、虚拟机、容器与连接关系。
+- 网络拓扑：支持手工维护，也可通过 iKuai v4 API 动态展示路由器、下游设备、在线终端与连接关系。
 - PostgreSQL 持久化：页面修改通过原子 JSONB upsert 保存，容器升级后继续保留。
 - 群晖友好：提供 Container Manager Compose、多架构 GHCR 镜像和部署说明。
 
@@ -24,6 +24,7 @@ Express :3000  ----  PostgreSQL / JSONB
   +---- /host/proc       (read-only host metrics)
   +---- /host/sys        (read-only host metrics)
   +---- /host/storage    (read-only storage metrics)
+  +---- iKuai v4 API     (optional read-only topology source)
   `---- Docker socket    (disabled by default)
 ```
 
@@ -76,8 +77,8 @@ docker compose -f docker-compose.yml -f docker-compose.database-file.yml ps
 
 - 将页面配置写入 PostgreSQL 表 `home_server_dashboard_config`。
 - 首次连接空表时，如 `data/config.json` 存在，会一次性导入旧配置。
-- 只读挂载宿主 `/proc`、`/sys` 与 `/volume1` 以采集指标。
-- 使用 `HOST_DISPLAY_NAME` 显示 NAS 型号或自定义设备名，避免展示容器 ID。
+- 只读挂载宿主 `/proc`、`/sys` 与 `/volume1` 以采集指标；多存储空间可使用群晖存储覆盖文件。
+- 从宿主 `/proc` 自动读取主机名，也可在“系统设置”中配置公开友好的设备名称。
 - 使用只读容器文件系统、移除 Linux capabilities，并限制容器日志大小。
 - 不挂载 Docker Socket。
 
@@ -91,6 +92,35 @@ DASHBOARD_IMAGE=home-server-dashboard:local docker compose up -d
 ```
 
 群晖完整步骤见 [docs/synology.md](docs/synology.md)，配置格式与环境变量见 [docs/configuration.md](docs/configuration.md)。
+
+有多个群晖存储空间时，同时加入可选覆盖文件（默认采集 `/volume1`、`/volume2` 和 `/volume3`）：
+
+```bash
+docker compose \
+  -f docker-compose.yml \
+  -f docker-compose.database-file.yml \
+  -f docker-compose.synology-storage.yml \
+  up -d
+```
+
+## iKuai 动态拓扑（可选）
+
+在 iKuai Web 管理界面的 **系统 > 认证 > API Token** 创建 Token。界面名称可能因固件版本略有不同；路由器需要支持 `/api/v4.0/monitoring/*` 接口。建议创建专用 Token；如果当前固件支持权限范围，只授予所需的监控读取权限。
+
+将 Token 单独保存为 `secrets/ikuai_token`，文件只包含一行 Token，不加引号、变量名或其他说明；结尾换行可有可无。然后在 `.env` 设置 `IKUAI_BASE_URL` 为路由器的 HTTP(S) origin，不要包含账号、密码、路径、查询参数或 URL 片段。推荐保持 `IKUAI_TOKEN` 和 `IKUAI_TOKEN_FILE` 为空，由覆盖文件设置容器内秘密文件路径：
+
+```bash
+chmod 600 secrets/ikuai_token
+docker compose \
+  -f docker-compose.yml \
+  -f docker-compose.database-file.yml \
+  -f docker-compose.ikuai.yml \
+  up -d
+```
+
+部署后在“系统设置 > 拓扑数据源”选择“iKuai v4 API”并保存。应用只调用系统、在线终端、下游设备和物理接口的只读监控端点；Token 与路由器地址不会进入页面配置导出。iKuai 未配置或暂时不可用时，拓扑页会明确提示并回退到已保存的手工拓扑，不影响其他页面。
+
+默认严格校验 HTTPS 证书。只有可信内网路由器确实使用自签名证书时才设置 `IKUAI_ALLOW_INSECURE_TLS=true`，并确保容器网络和 NAS 防火墙只允许访问预期路由器。完整变量与群晖步骤见 [docs/configuration.md](docs/configuration.md) 和 [docs/synology.md](docs/synology.md)。
 
 ## Docker 容器信息（可选且高风险）
 
@@ -121,7 +151,8 @@ docker compose \
 - 当前应用本身不应被视为互联网边界认证服务。对外访问时，请在 DSM 反向代理前增加身份验证、访问控制或仅通过可信 VPN 访问。
 - 内置 Basic Auth 适合家庭内网的基础保护，不替代 HTTPS、多因素认证或成熟的身份代理；`/api/health` 为容器探针保持公开。
 - HTTP/TCP 状态检查由服务端发起，配置编辑权限等同于允许访问家庭内网探测能力。
-- 服务图标由服务端访问配置的内网 `url` 及页面明确声明的图标地址，因此只应配置可信的服务页面。跨域图标仅允许公网 HTTPS 默认端口、禁止跨源重定向并始终校验证书；第三方图标主机会看到 NAS 的出口 IP。`SERVICE_ICON_ALLOW_INSECURE_TLS` 仅应在可信内网服务使用自签名或已过期证书时启用。
+- iKuai Token 只能保存在服务端环境或只读秘密文件中，不得写入页面配置、截图或仓库；应用不会跟随 iKuai API 重定向。
+- 服务图标由服务端访问配置的内网 `url` 及页面明确声明的图标地址，因此只应配置可信的服务页面。跨域图标仅允许公网 HTTPS 默认端口、禁止跨源重定向并始终校验证书；第三方图标主机会看到 NAS 的出口 IP。可信内网设备使用自签名证书时，只为对应服务启用 `iconAllowInsecureTls`；全局 `SERVICE_ICON_ALLOW_INSECURE_TLS` 通常应保持关闭。
 - `externalUrl` 会通过配置 API 和 JSON 导出显示，不能在 URL 中保存密码、Token 或其他秘密。
 - 宿主指标挂载虽然只读，仍会向容器披露系统信息；不需要的挂载应删除。
 

@@ -35,6 +35,23 @@ describe('ConfigStore', () => {
     await expect(store.get()).resolves.toEqual(DEFAULT_CONFIG);
   });
 
+  it('preserves a host display name supplied by installation defaults', async () => {
+    const dataDir = await createTemporaryDirectory();
+    const defaults = {
+      ...DEFAULT_CONFIG,
+      settings: { ...DEFAULT_CONFIG.settings, hostDisplayName: 'Default NAS' },
+    };
+    const store = new ConfigStore({
+      dataDir,
+      defaults,
+      defaultsFile: path.join(dataDir, 'missing-defaults.json'),
+    });
+
+    await expect(store.get()).resolves.toMatchObject({
+      settings: { hostDisplayName: 'Default NAS' },
+    });
+  });
+
   it('persists normalized config that a fresh store instance can read', async () => {
     const dataDir = await createTemporaryDirectory();
     const options = {
@@ -52,7 +69,7 @@ describe('ConfigStore', () => {
           id: 'photos',
           name: 'Photos',
           url: 'http://photos.home.arpa',
-          externalUrl: 'https://photos.example.com',
+          externalUrl: 'https://photos.example.com/apps/photos?view=timeline#today',
           check: { type: 'http' },
         },
       ],
@@ -74,16 +91,21 @@ describe('ConfigStore', () => {
         description: '',
         category: '其他',
         icon: 'default',
+        iconAllowInsecureTls: false,
         favorite: false,
         ...config.services[0],
       }],
       topology: {
+        source: 'manual',
+        refreshInterval: 15_000,
         nodes: [{ type: 'server', x: 50, y: 50, ...config.topology.nodes[0] }],
         links: [],
       },
     });
     expect(reloaded).toEqual(saved);
     expect(onDisk).toEqual(saved);
+    expect(reloaded.services[0].externalUrl).toBe(config.services[0].externalUrl);
+    expect(onDisk.services[0].externalUrl).toBe(config.services[0].externalUrl);
   });
 
   it('normalizes legacy services without an external URL', async () => {
@@ -108,7 +130,52 @@ describe('ConfigStore', () => {
       id: 'legacy-nas',
       url: 'https://nas.home.arpa:5001',
       externalUrl: '',
+      iconAllowInsecureTls: false,
     });
+    expect(config.settings.hostDisplayName).toBe('');
+  });
+
+  it('normalizes and validates the persisted host display name', async () => {
+    const dataDir = await createTemporaryDirectory();
+    const store = new ConfigStore({
+      dataDir,
+      defaultsFile: path.join(dataDir, 'missing-defaults.json'),
+    });
+
+    const saved = await store.put({ settings: { hostDisplayName: '  Synology DS920+  ' } });
+    expect(saved.settings.hostDisplayName).toBe('Synology DS920+');
+
+    await expect(store.put({ settings: { hostDisplayName: 920 } }))
+      .rejects.toThrow('settings.hostDisplayName must be a string');
+    await expect(store.put({ settings: { hostDisplayName: 'x'.repeat(101) } }))
+      .rejects.toThrow('settings.hostDisplayName must be at most 100 characters');
+  });
+
+  it('persists a per-service insecure TLS opt-in for icon discovery', async () => {
+    const dataDir = await createTemporaryDirectory();
+    const store = new ConfigStore({
+      dataDir,
+      defaultsFile: path.join(dataDir, 'missing-defaults.json'),
+    });
+
+    const saved = await store.put({
+      services: [{
+        id: 'nas',
+        name: 'NAS',
+        url: 'https://nas.home.arpa:5001',
+        iconAllowInsecureTls: true,
+      }],
+    });
+
+    expect(saved.services[0].iconAllowInsecureTls).toBe(true);
+    await expect(store.put({
+      services: [{
+        id: 'nas',
+        name: 'NAS',
+        url: 'https://nas.home.arpa:5001',
+        iconAllowInsecureTls: 'yes',
+      }],
+    })).rejects.toThrow('services[0].iconAllowInsecureTls must be a boolean');
   });
 
   it('accepts an empty external URL and validates non-empty external URLs', async () => {
@@ -182,6 +249,57 @@ describe('ConfigStore', () => {
         links: [{ source: 'nas', target: 'missing' }],
       },
     })).rejects.toThrow('references an unknown node');
+  });
+
+  it('normalizes and validates the optional iKuai topology source', async () => {
+    const dataDir = await createTemporaryDirectory();
+    const store = new ConfigStore({
+      dataDir,
+      defaultsFile: path.join(dataDir, 'missing-defaults.json'),
+    });
+
+    const saved = await store.put({
+      topology: { source: 'ikuai', refreshInterval: 30_000 },
+    });
+    expect(saved.topology).toMatchObject({
+      source: 'ikuai',
+      refreshInterval: 30_000,
+      nodes: [],
+      links: [],
+    });
+
+    await expect(store.put({ topology: { source: 'router-password' } }))
+      .rejects.toThrow('topology.source must be manual or ikuai');
+    await expect(store.put({ topology: { refreshInterval: 1_000 } }))
+      .rejects.toThrow('topology.refreshInterval must be an integer between 5000 and 300000');
+  });
+
+  it('never persists deployment addresses or secrets from imported topology config', async () => {
+    const dataDir = await createTemporaryDirectory();
+    const store = new ConfigStore({
+      dataDir,
+      defaultsFile: path.join(dataDir, 'missing-defaults.json'),
+    });
+
+    const saved = await store.put({
+      topology: {
+        source: 'ikuai',
+        refreshInterval: 15_000,
+        baseUrl: 'http://router.invalid',
+        token: 'must-not-be-persisted',
+        password: 'must-not-be-persisted',
+      },
+    });
+    const serialized = await readFile(path.join(dataDir, 'config.json'), 'utf8');
+
+    expect(saved.topology).toEqual({
+      source: 'ikuai',
+      refreshInterval: 15_000,
+      nodes: [],
+      links: [],
+    });
+    expect(serialized).not.toContain('router.invalid');
+    expect(serialized).not.toContain('must-not-be-persisted');
   });
 
   it('reports a corrupt persisted JSON document instead of silently replacing it', async () => {

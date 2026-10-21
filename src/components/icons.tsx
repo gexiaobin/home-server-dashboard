@@ -1,6 +1,8 @@
 import {
   Box,
   Boxes,
+  Cable,
+  Camera,
   Cloud,
   Container,
   Globe2,
@@ -11,9 +13,11 @@ import {
   MonitorCog,
   Network,
   Play,
+  Printer,
   Router,
   Server,
   ShieldCheck,
+  Wifi,
   type LucideIcon,
 } from 'lucide-react';
 
@@ -37,6 +41,10 @@ const nodeIcons: Record<string, LucideIcon> = {
   vm: MonitorCog,
   container: Container,
   client: Laptop,
+  switch: Cable,
+  ap: Wifi,
+  camera: Camera,
+  printer: Printer,
   cloud: Cloud,
 };
 

@@ -7,15 +7,16 @@ import type { AppConfig, Overview } from '../types';
 import { OverviewView } from './OverviewView';
 
 const config: AppConfig = {
-  settings: { title: 'HomeLab', location: 'Home', refreshInterval: 5000 },
+  settings: { title: 'HomeLab', location: 'Home', hostDisplayName: '', refreshInterval: 5000 },
   services: [],
-  topology: { nodes: [], links: [] },
+  topology: { source: 'manual', refreshInterval: 15_000, nodes: [], links: [] },
 };
 
 const overview: Overview = {
   timestamp: '2026-10-21T07:17:00.000Z',
   system: {
     hostname: 'Synology DS920+',
+    detectedHostname: 'DiskStation',
     platform: 'linux',
     uptime: 3600,
     loadAverage: [0.11, 0.23, 0.27],
@@ -41,8 +42,8 @@ describe('OverviewView CPU telemetry', () => {
     const telemetry = screen.getByRole('region', { name: '实时遥测' });
     expect(within(telemetry).getByText('CPU 使用率')).toBeInTheDocument();
     expect(within(telemetry).getByText('38%')).toBeInTheDocument();
-    expect(within(telemetry).getByText('1 / 5 / 15 分钟负载')).toBeInTheDocument();
-    expect(within(telemetry).getByText('0.11 · 0.23 · 0.27')).toBeInTheDocument();
+    expect(within(telemetry).getByText('1 / 5 / 15 分钟核心负载率')).toBeInTheDocument();
+    expect(within(telemetry).getByText('3% · 6% · 7%')).toBeInTheDocument();
     expect(within(telemetry).getByText('0 / 0')).toBeInTheDocument();
     expect(screen.getByRole('progressbar', { name: '当前 CPU 使用率' }))
       .toHaveAttribute('aria-valuenow', '38');
@@ -70,6 +71,26 @@ describe('OverviewView CPU telemetry', () => {
 
     expect(screen.getByText('未连接')).toBeInTheDocument();
     expect(screen.queryByText('0 / 0')).not.toBeInTheDocument();
+  });
+
+  it('weights the storage summary across all three visible volumes', () => {
+    render(
+      <OverviewView
+        config={config}
+        overview={{
+          ...overview,
+          disks: [
+            { mount: '/host/storage', used: 90, total: 100, percent: 90 },
+            { mount: '/host/storage/volume2', used: 50, total: 500, percent: 10 },
+            { mount: '/host/storage/volume3', used: 160, total: 400, percent: 40 },
+          ],
+        }}
+        networkMode="internal"
+        onNavigate={vi.fn()}
+      />,
+    );
+
+    expect(screen.getByText('存储').parentElement).toHaveTextContent('30%存储');
   });
 
   it('marks retained telemetry as stale when the backend connection is lost', () => {

@@ -6,6 +6,7 @@ import {
   parseCpuStat,
   parseMeminfo,
   parseNetworkDev,
+  readDiskMetrics,
   readSystemMetrics,
 } from './metrics.mjs';
 
@@ -18,7 +19,7 @@ function networkFixture(rxBytes, txBytes) {
   ].join('\n');
 }
 
-function createFixtureFs() {
+function createFixtureFs({ hostName } = {}) {
   const cpuSamples = [
     'cpu  100 0 0 900 0\ncpu0 50 0 0 450 0\ncpu1 50 0 0 450 0\n',
     'cpu  180 0 0 920 0\ncpu0 90 0 0 460 0\ncpu1 90 0 0 460 0\n',
@@ -38,6 +39,9 @@ function createFixtureFs() {
       }
       if (filePath.endsWith('/net/dev')) {
         return networkSamples[Math.min(networkIndex++, networkSamples.length - 1)];
+      }
+      if (filePath.endsWith('/sys/kernel/hostname') && hostName) {
+        return `${hostName}\n`;
       }
       throw Object.assign(new Error(`Unexpected read: ${filePath}`), { code: 'ENOENT' });
     }),
@@ -75,6 +79,26 @@ describe('metric parsers', () => {
       { name: 'eth0', rxBytes: 1_000, txBytes: 2_000 },
       { name: 'lo', rxBytes: 50, txBytes: 50 },
     ]);
+  });
+
+  it('collects every distinct readable storage mount', async () => {
+    const fsImpl = {
+      stat: vi.fn(async (mount) => ({ dev: mount.endsWith('volume2') ? 2 : 1 })),
+      statfs: vi.fn(async (mount) => mount.endsWith('volume2')
+        ? { bsize: 1024, blocks: 2000, bfree: 500 }
+        : { bsize: 1024, blocks: 1000, bfree: 250 }),
+    };
+
+    await expect(readDiskMetrics([
+      '/host/storage',
+      '/host/storage-alias',
+      '/host/storage/volume2',
+      '/host/storage',
+    ], fsImpl)).resolves.toEqual([
+      { mount: '/host/storage', used: 750 * 1024, total: 1000 * 1024, percent: 75 },
+      { mount: '/host/storage/volume2', used: 1500 * 1024, total: 2000 * 1024, percent: 75 },
+    ]);
+    expect(fsImpl.statfs).toHaveBeenCalledTimes(2);
   });
 });
 
@@ -128,27 +152,25 @@ describe('MetricsCollector', () => {
     });
   });
 
-  it('uses a trimmed host display name instead of the container hostname', async () => {
+  it('reads the host hostname from the mounted proc tree', async () => {
     const result = await readSystemMetrics({
       procRoot: '/fixture/proc',
       sysRoot: '/fixture/sys',
       diskPaths: [],
-      hostDisplayName: '  Synology DS920+  ',
-      fsImpl: createFixtureFs(),
+      fsImpl: createFixtureFs({ hostName: 'DiskStation' }),
       osImpl: osFixture,
       now: () => 1_000,
       sampleIntervalMs: 0,
     });
 
-    expect(result.system.hostname).toBe('Synology DS920+');
+    expect(result.system.hostname).toBe('DiskStation');
   });
 
-  it('falls back to the system hostname when the display name is blank', async () => {
+  it('falls back to the runtime hostname when host proc does not expose one', async () => {
     const result = await readSystemMetrics({
       procRoot: '/fixture/proc',
       sysRoot: '/fixture/sys',
       diskPaths: [],
-      hostDisplayName: '   ',
       fsImpl: createFixtureFs(),
       osImpl: osFixture,
       now: () => 1_000,

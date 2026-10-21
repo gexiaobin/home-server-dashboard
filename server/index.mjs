@@ -14,6 +14,7 @@ import {
   PostgresConfigStore,
 } from './config-store.mjs';
 import { MetricsCollector } from './metrics.mjs';
+import { createIkuaiTopologyProvider, IkuaiProviderError } from './ikuai.mjs';
 import { createServiceIconFetcher } from './service-icon.mjs';
 
 const SERVER_DIR = path.dirname(fileURLToPath(import.meta.url));
@@ -310,8 +311,9 @@ export function createApp({
   metricsCollector = new MetricsCollector({
     procRoot: env.HOST_PROC,
     sysRoot: env.HOST_SYS,
-    diskPaths: env.HOST_STORAGE ? [env.HOST_STORAGE] : undefined,
-    hostDisplayName: env.HOST_DISPLAY_NAME,
+    diskPaths: env.HOST_STORAGE
+      ? env.HOST_STORAGE.split(',').map((item) => item.trim()).filter(Boolean)
+      : undefined,
   }),
   serviceChecker = checkService,
   dockerClient = listDockerContainers,
@@ -328,6 +330,7 @@ export function createApp({
     ),
     timeoutMs: parsePositiveInteger(env.SERVICE_ICON_TIMEOUT_MS, 5000, 'SERVICE_ICON_TIMEOUT_MS'),
   }),
+  topologyProvider = createIkuaiTopologyProvider({ env, logger }),
   distDir = path.join(PROJECT_DIR, 'dist'),
   serveStatic = true,
 } = {}) {
@@ -369,6 +372,44 @@ export function createApp({
 
   app.put('/api/config', asyncRoute(async (request, response) => {
     response.json(await configStore.put(request.body));
+  }));
+
+  app.get('/api/topology', asyncRoute(async (_request, response) => {
+    const config = await configStore.get();
+    const topology = config.topology || { nodes: [], links: [] };
+    const manualSnapshot = {
+      requestedSource: topology.source || 'manual',
+      source: 'manual',
+      status: topology.source === 'ikuai' ? 'fallback' : 'manual',
+      updatedAt: null,
+      nodes: topology.nodes || [],
+      links: topology.links || [],
+    };
+    if (topology.source !== 'ikuai') {
+      response.json(manualSnapshot);
+      return;
+    }
+
+    try {
+      const snapshot = await topologyProvider.load(topology.refreshInterval);
+      response.json({
+        requestedSource: 'ikuai',
+        source: 'ikuai',
+        status: 'live',
+        ...snapshot,
+      });
+    } catch (error) {
+      const code = error instanceof IkuaiProviderError ? error.code : 'IKUAI_UNAVAILABLE';
+      logger.warn?.(`Unable to load iKuai topology (${code})`);
+      response.json({
+        ...manualSnapshot,
+        message: code === 'IKUAI_NOT_CONFIGURED'
+          ? 'iKuai API Token 尚未在部署环境中配置，当前显示手工拓扑。'
+          : code === 'IKUAI_AUTH_FAILED'
+            ? 'iKuai Token 无效、已过期或权限不足，当前显示手工拓扑。'
+            : 'iKuai 数据暂时不可用，当前显示手工拓扑。',
+      });
+    }
   }));
 
   const handleServiceCheck = asyncRoute(async (request, response) => {
@@ -438,6 +479,12 @@ export function createApp({
     response.json({
       timestamp: new Date().toISOString(),
       ...metrics,
+      system: {
+        ...metrics.system,
+        detectedHostname: metrics.system.hostname,
+        hostname: config.settings?.hostDisplayName?.trim()
+          || metrics.system.hostname,
+      },
       services,
       containers,
       containersAvailable,

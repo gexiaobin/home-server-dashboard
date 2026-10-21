@@ -174,11 +174,27 @@ export async function readTemperatures(sysRoot, fsImpl = fs) {
 export async function readDiskMetrics(diskPaths, fsImpl = fs) {
   const disks = [];
   const uniquePaths = [...new Set(diskPaths.filter(Boolean))];
+  const filesystemIdentities = new Set();
   for (const mount of uniquePaths) {
     if (PSEUDO_DISK_PATHS.has(mount)) {
       continue;
     }
     try {
+      let canonicalPath = mount;
+      if (typeof fsImpl.realpath === 'function') {
+        canonicalPath = await fsImpl.realpath(mount).catch(() => mount);
+      }
+      let identity = `path:${canonicalPath}`;
+      if (typeof fsImpl.stat === 'function') {
+        const metadata = await fsImpl.stat(mount).catch(() => null);
+        if (metadata?.dev !== undefined) {
+          identity = `device:${String(metadata.dev)}`;
+        }
+      }
+      if (filesystemIdentities.has(identity)) {
+        continue;
+      }
+
       const stats = await fsImpl.statfs(mount);
       const blockSize = Number(stats.bsize);
       const total = Number(stats.blocks) * blockSize;
@@ -187,6 +203,7 @@ export async function readDiskMetrics(diskPaths, fsImpl = fs) {
       if (!Number.isFinite(total) || total <= 0) {
         continue;
       }
+      filesystemIdentities.add(identity);
       disks.push({
         mount,
         used,
@@ -206,7 +223,7 @@ function configuredDiskPaths(explicitPaths) {
   }
   const paths = [];
   if (process.env.HOST_STORAGE) {
-    paths.push(process.env.HOST_STORAGE);
+    paths.push(...process.env.HOST_STORAGE.split(',').map((item) => item.trim()).filter(Boolean));
   }
   if (process.env.DISK_PATHS) {
     paths.push(...process.env.DISK_PATHS.split(',').map((item) => item.trim()).filter(Boolean));
@@ -232,7 +249,6 @@ export class MetricsCollector {
     procRoot,
     sysRoot,
     diskPaths,
-    hostDisplayName,
     fsImpl = fs,
     osImpl = os,
     now = () => Date.now(),
@@ -242,9 +258,6 @@ export class MetricsCollector {
     this.procRoot = procRoot;
     this.sysRoot = sysRoot;
     this.diskPaths = configuredDiskPaths(diskPaths);
-    this.hostDisplayName = typeof hostDisplayName === 'string' && hostDisplayName.trim()
-      ? hostDisplayName.trim()
-      : null;
     this.fs = fsImpl;
     this.os = osImpl;
     this.now = now;
@@ -292,6 +305,21 @@ export class MetricsCollector {
     return parseCpuStat(raw);
   }
 
+  async readHostname() {
+    if (this.resolvedProcRoot) {
+      try {
+        const hostname = (await this.fs.readFile(
+          path.join(this.resolvedProcRoot, 'sys/kernel/hostname'),
+          'utf8',
+        )).trim();
+        if (hostname) return hostname;
+      } catch {
+        // Fall back to the runtime hostname when host proc does not expose it.
+      }
+    }
+    return this.os.hostname();
+  }
+
   async collect() {
     await this.resolveRoots();
     let currentCpu = await this.readCpu();
@@ -306,7 +334,7 @@ export class MetricsCollector {
     }
     this.previousCpu = currentCpu;
 
-    const [meminfo, networkText, disks, temperatures] = await Promise.all([
+    const [meminfo, networkText, disks, temperatures, hostname] = await Promise.all([
       this.resolvedProcRoot
         ? this.fs.readFile(path.join(this.resolvedProcRoot, 'meminfo'), 'utf8')
         : null,
@@ -315,6 +343,7 @@ export class MetricsCollector {
         : null,
       readDiskMetrics(this.diskPaths, this.fs),
       this.resolvedSysRoot ? readTemperatures(this.resolvedSysRoot, this.fs) : [],
+      this.readHostname(),
     ]);
 
     const interfaces = networkText ? parseNetworkDev(networkText) : [];
@@ -340,7 +369,7 @@ export class MetricsCollector {
 
     return {
       system: {
-        hostname: this.hostDisplayName || this.os.hostname(),
+        hostname,
         platform: this.os.platform(),
         uptime: this.os.uptime(),
         loadAverage: this.os.loadavg(),

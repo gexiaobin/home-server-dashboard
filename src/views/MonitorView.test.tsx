@@ -12,6 +12,7 @@ const overview: Overview = {
   timestamp: '2026-10-21T07:17:00.000Z',
   system: {
     hostname: 'Synology DS920+',
+    detectedHostname: 'DiskStation',
     platform: 'linux',
     uptime: 3600 * 26,
     loadAverage: [2, 1, 0.5],
@@ -19,8 +20,9 @@ const overview: Overview = {
   cpu: { usage: 32, cores: 4 },
   memory: { used: 4 * GIB, total: 16 * GIB, percent: 25 },
   disks: [
-    { mount: '/', used: 4 * GIB, total: 8 * GIB, percent: 50 },
+    { mount: '/host/storage', used: 4 * GIB, total: 8 * GIB, percent: 50 },
     { mount: '/volume2', used: 6 * GIB, total: 12 * GIB, percent: 50 },
+    { mount: '/host/storage/volume3', used: 2 * GIB, total: 4 * GIB, percent: 50 },
   ],
   network: {
     rxBytesPerSecond: 2048,
@@ -62,23 +64,29 @@ beforeAll(() => {
 afterEach(cleanup);
 
 describe('MonitorView', () => {
-  it('presents load averages as labelled core-capacity percentages', () => {
+  it('presents load averages as direct core-capacity percentages with raw values', () => {
     render(<MonitorView overview={overview} history={history} />);
 
     expect(screen.getByRole('heading', { name: '系统运行概况' })).toBeInTheDocument();
     expect(screen.getAllByText('Synology DS920+').length).toBeGreaterThan(0);
-    expect(screen.getByRole('progressbar', { name: '1 分钟系统负载' }))
-      .toHaveAttribute('aria-valuetext', '50% 核心容量');
-    expect(screen.getByRole('progressbar', { name: '5 分钟系统负载' }))
-      .toHaveAttribute('aria-valuetext', '25% 核心容量');
-    expect(screen.getByText('50% · 2.00')).toBeInTheDocument();
+    expect(screen.getByText('50% · 正常')).toBeInTheDocument();
+    const loadSummary = screen.getByLabelText('系统平均负载');
+    expect(within(loadSummary).getByText('负载 2.00 / 4 核')).toBeInTheDocument();
+    expect(within(loadSummary).getByText('负载 1.00 / 4 核')).toBeInTheDocument();
+    expect(within(loadSummary).getByText('负载 0.50 / 4 核')).toBeInTheDocument();
+    expect(within(loadSummary).getAllByText('正常')).toHaveLength(1);
   });
 
-  it('uses the largest storage volume and hottest temperature sensor', () => {
+  it('summarizes and renders every storage volume and the hottest temperature sensor', () => {
     render(<MonitorView overview={overview} history={history} />);
 
-    const storageCard = screen.getByRole('article', { name: '存储空间 50%' });
-    expect(within(storageCard).getByText('/volume2')).toBeInTheDocument();
+    const storageCard = screen.getByRole('article', { name: '存储总览 50%' });
+    expect(storageCard).toHaveTextContent('3 个存储空间');
+    const storageList = screen.getByRole('list', { name: '存储空间' });
+    expect(within(storageList).getAllByRole('listitem')).toHaveLength(3);
+    expect(within(storageList).getByText('存储空间 1')).toBeInTheDocument();
+    expect(within(storageList).getByText('存储空间 2')).toBeInTheDocument();
+    expect(within(storageList).getByText('存储空间 3')).toBeInTheDocument();
 
     const temperatureCard = screen.getByRole('article', { name: '系统温度 58°C' });
     expect(within(temperatureCard).getByText('CPU')).toBeInTheDocument();
@@ -107,9 +115,11 @@ describe('MonitorView', () => {
       containersAvailable: false,
     }} history={[]} />);
 
-    expect(screen.getByRole('article', { name: '存储空间 --' })).toHaveTextContent('未挂载存储卷');
-    expect(screen.getByRole('article', { name: '系统温度 --' })).toHaveTextContent('传感器不可用');
-    expect(within(screen.getByRole('article', { name: '系统温度 --' })).queryByRole('progressbar')).not.toBeInTheDocument();
+    expect(screen.getByRole('article', { name: '存储总览 --' })).toHaveTextContent('未挂载存储卷');
+    const uptimeCard = screen.getByRole('article', { name: '系统运行时间 1 天 2 小时' });
+    expect(uptimeCard).toHaveTextContent('Docker 未连接');
+    expect(within(uptimeCard).queryByRole('progressbar')).not.toBeInTheDocument();
+    expect(screen.getByText('没有可见存储空间')).toBeInTheDocument();
     expect(screen.getByText('Docker 数据不可用')).toBeInTheDocument();
     expect(screen.getByText('正在积累趋势样本')).toBeInTheDocument();
   });
@@ -122,17 +132,17 @@ describe('MonitorView', () => {
     expect(screen.queryByText('Docker 数据不可用')).not.toBeInTheDocument();
   });
 
-  it('keeps overload percentages above 100 visible while clamping the meter', () => {
+  it('keeps overload percentages above 100 visible with an explicit status', () => {
     render(<MonitorView overview={{
       ...overview,
       system: { ...overview.system, loadAverage: [8, 1, 0.5] },
     }} history={history} connected={false} />);
 
-    expect(screen.getByText('200% · 8.00')).toBeInTheDocument();
-    expect(screen.getByRole('progressbar', { name: '1 分钟系统负载' }))
-      .toHaveAttribute('aria-valuenow', '100');
-    expect(screen.getByRole('progressbar', { name: '1 分钟系统负载' }))
-      .toHaveAttribute('aria-valuetext', '200% 核心容量');
+    expect(screen.getByText('200% · 超载')).toBeInTheDocument();
+    const loadSummary = screen.getByLabelText('系统平均负载');
+    expect(within(loadSummary).getByText('200%')).toBeInTheDocument();
+    expect(within(loadSummary).getByText('负载 8.00 / 4 核')).toBeInTheDocument();
+    expect(within(loadSummary).getByText('超载')).toBeInTheDocument();
     expect(screen.getByText('连接中断，显示最近采样')).toBeInTheDocument();
   });
 });

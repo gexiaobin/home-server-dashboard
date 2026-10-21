@@ -8,8 +8,9 @@ import { ServiceAppIcon } from './ServiceAppIcon';
 const service = {
   id: 'home-assistant',
   name: 'qBittorrent',
-  url: 'http://192.168.123.8:8080/#/login',
+  url: 'http://192.0.2.8:8080/#/login',
   icon: 'house',
+  iconAllowInsecureTls: false,
 };
 
 describe('ServiceAppIcon', () => {
@@ -79,6 +80,19 @@ describe('ServiceAppIcon', () => {
     expect(container.querySelector('img')).toHaveAttribute(
       'src',
       '/api/services/custom-service/icon',
+    );
+  });
+
+  it('retries immediately after insecure TLS is enabled for the service', () => {
+    const { container, rerender } = render(<ServiceAppIcon service={service} />);
+
+    fireEvent.error(container.querySelector('img') as HTMLImageElement);
+    expect(container.querySelector('img')).toBeNull();
+
+    rerender(<ServiceAppIcon service={{ ...service, iconAllowInsecureTls: true }} />);
+    expect(container.querySelector('img')).toHaveAttribute(
+      'src',
+      '/api/services/home-assistant/icon',
     );
   });
 });
