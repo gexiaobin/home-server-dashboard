@@ -188,9 +188,24 @@ export async function checkService(service, {
 
 function dockerRequest(socketPath, requestPath, timeoutMs) {
   return new Promise((resolve, reject) => {
+    let settled = false;
+    let timeout;
+    const finish = (error, value) => {
+      if (settled) {
+        return;
+      }
+      settled = true;
+      clearTimeout(timeout);
+      if (error) {
+        reject(error);
+      } else {
+        resolve(value);
+      }
+    };
     const request = httpRequest({ socketPath, path: requestPath, method: 'GET' }, (response) => {
       const chunks = [];
       let size = 0;
+      response.once('error', (error) => finish(error));
       response.on('data', (chunk) => {
         size += chunk.length;
         if (size > 10 * 1024 * 1024) {
@@ -202,14 +217,16 @@ function dockerRequest(socketPath, requestPath, timeoutMs) {
       response.on('end', () => {
         const body = Buffer.concat(chunks).toString('utf8');
         if ((response.statusCode || 500) >= 400) {
-          reject(new Error(`Docker API returned HTTP ${response.statusCode}`));
+          finish(new Error(`Docker API returned HTTP ${response.statusCode}`));
           return;
         }
-        resolve(body);
+        finish(null, body);
       });
     });
-    request.setTimeout(timeoutMs, () => request.destroy(new Error(`Docker API timed out after ${timeoutMs} ms`)));
-    request.once('error', reject);
+    timeout = setTimeout(() => {
+      request.destroy(new Error(`Docker API timed out after ${timeoutMs} ms`));
+    }, timeoutMs);
+    request.once('error', (error) => finish(error));
     request.end();
   });
 }
@@ -294,10 +311,12 @@ export function createApp({
     procRoot: env.HOST_PROC,
     sysRoot: env.HOST_SYS,
     diskPaths: env.HOST_STORAGE ? [env.HOST_STORAGE] : undefined,
+    hostDisplayName: env.HOST_DISPLAY_NAME,
   }),
   serviceChecker = checkService,
   dockerClient = listDockerContainers,
   dockerSocket = env.DOCKER_SOCKET || null,
+  dockerTimeoutMs = parsePositiveInteger(env.DOCKER_API_TIMEOUT_MS, 3000, 'DOCKER_API_TIMEOUT_MS'),
   basicAuth,
   logger = console,
   serviceTimeoutMs = parsePositiveInteger(env.SERVICE_CHECK_TIMEOUT_MS, 5000, 'SERVICE_CHECK_TIMEOUT_MS'),
@@ -406,9 +425,11 @@ export function createApp({
     })));
 
     let containers = [];
+    let containersAvailable = false;
     if (dockerSocket) {
       try {
-        containers = await dockerClient(dockerSocket);
+        containers = await dockerClient(dockerSocket, { timeoutMs: dockerTimeoutMs });
+        containersAvailable = true;
       } catch (error) {
         logger.warn?.(`Unable to read Docker containers: ${error.message}`);
       }
@@ -419,6 +440,7 @@ export function createApp({
       ...metrics,
       services,
       containers,
+      containersAvailable,
     });
   }));
 

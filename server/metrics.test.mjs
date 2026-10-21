@@ -127,4 +127,34 @@ describe('MetricsCollector', () => {
       memory: { percent: 75 },
     });
   });
+
+  it('uses a trimmed host display name instead of the container hostname', async () => {
+    const result = await readSystemMetrics({
+      procRoot: '/fixture/proc',
+      sysRoot: '/fixture/sys',
+      diskPaths: [],
+      hostDisplayName: '  Synology DS920+  ',
+      fsImpl: createFixtureFs(),
+      osImpl: osFixture,
+      now: () => 1_000,
+      sampleIntervalMs: 0,
+    });
+
+    expect(result.system.hostname).toBe('Synology DS920+');
+  });
+
+  it('falls back to the system hostname when the display name is blank', async () => {
+    const result = await readSystemMetrics({
+      procRoot: '/fixture/proc',
+      sysRoot: '/fixture/sys',
+      diskPaths: [],
+      hostDisplayName: '   ',
+      fsImpl: createFixtureFs(),
+      osImpl: osFixture,
+      now: () => 1_000,
+      sampleIntervalMs: 0,
+    });
+
+    expect(result.system.hostname).toBe('nas-test');
+  });
 });

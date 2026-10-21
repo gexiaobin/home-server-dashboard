@@ -1,8 +1,18 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
+import { promises as fs } from 'node:fs';
+import { createServer } from 'node:http';
+import os from 'node:os';
+import path from 'node:path';
 
-import { checkService, createApp, createConfigStore } from './index.mjs';
+import {
+  checkService,
+  createApp,
+  createConfigStore,
+  listDockerContainers,
+} from './index.mjs';
 
 const servers = [];
+const temporaryDirectories = [];
 const iconBytes = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
 
 const configFixture = {
@@ -62,6 +72,7 @@ function createDependencies(overrides = {}) {
     env: { npm_package_version: '9.9.9' },
     logger: { log: vi.fn(), warn: vi.fn(), error: vi.fn() },
     serviceTimeoutMs: 321,
+    dockerTimeoutMs: 654,
     serveStatic: false,
     ...overrides,
   };
@@ -77,6 +88,19 @@ async function serve(app) {
   return `http://127.0.0.1:${address.port}`;
 }
 
+async function serveDocker(handler) {
+  const directory = await fs.mkdtemp(path.join(os.tmpdir(), 'dashboard-docker-'));
+  temporaryDirectories.push(directory);
+  const socketPath = path.join(directory, 'docker.sock');
+  const server = createServer(handler);
+  await new Promise((resolve, reject) => {
+    server.listen(socketPath, resolve);
+    server.once('error', reject);
+  });
+  servers.push(server);
+  return socketPath;
+}
+
 async function readJson(response) {
   return response.json();
 }
@@ -85,6 +109,10 @@ afterEach(async () => {
   await Promise.all(servers.splice(0).map((server) => new Promise((resolve, reject) => {
     server.closeAllConnections?.();
     server.close((error) => (error ? reject(error) : resolve()));
+  })));
+  await Promise.all(temporaryDirectories.splice(0).map((directory) => fs.rm(directory, {
+    recursive: true,
+    force: true,
   })));
 });
 
@@ -159,6 +187,40 @@ describe('checkService', () => {
 
     expect(httpResult).toMatchObject({ id: 'web', status: 'down', message: 'HTTP 503' });
     expect(tcpResult).toMatchObject({ id: 'ssh', status: 'down', message: 'Connection refused' });
+  });
+});
+
+describe('listDockerContainers', () => {
+  it('reads and normalizes all containers from the Docker Unix socket', async () => {
+    const socketPath = await serveDocker((request, response) => {
+      expect(request.method).toBe('GET');
+      expect(request.url).toBe('/containers/json?all=1');
+      response.setHeader('content-type', 'application/json');
+      response.end(JSON.stringify([{
+        Id: 'abcdef1234567890',
+        Names: ['/home-server-dashboard'],
+        Image: 'dashboard:test',
+        State: 'running',
+        Status: 'Up 2 minutes',
+      }]));
+    });
+
+    await expect(listDockerContainers(socketPath, { timeoutMs: 500 })).resolves.toEqual([{
+      id: 'abcdef1234567890',
+      name: 'home-server-dashboard',
+      image: 'dashboard:test',
+      state: 'running',
+      status: 'Up 2 minutes',
+    }]);
+  });
+
+  it('enforces a total timeout when the Docker API does not respond', async () => {
+    const socketPath = await serveDocker(() => {
+      // Leave the response open to exercise the request deadline.
+    });
+
+    await expect(listDockerContainers(socketPath, { timeoutMs: 25 }))
+      .rejects.toThrow('Docker API timed out after 25 ms');
   });
 });
 
@@ -332,13 +394,37 @@ describe('createApp', () => {
       cpu: { usage: 12.5, cores: 4 },
       services: [{ id: 'photos', status: 'up' }],
       containers: [{ id: 'container-1', name: 'photos', state: 'running' }],
+      containersAvailable: true,
     });
     expect(dependencies.metricsCollector.collect).toHaveBeenCalledOnce();
     expect(dependencies.serviceChecker).toHaveBeenCalledWith(
       configFixture.services[0],
       { timeoutMs: 321 },
     );
-    expect(dependencies.dockerClient).toHaveBeenCalledWith('/fixture/docker.sock');
+    expect(dependencies.dockerClient).toHaveBeenCalledWith('/fixture/docker.sock', { timeoutMs: 654 });
+  });
+
+  it('keeps overview available when Docker container discovery times out', async () => {
+    const dependencies = createDependencies({
+      dockerSocket: '/fixture/docker.sock',
+      dockerClient: vi.fn(async () => {
+        throw new Error('Docker API timed out after 654 ms');
+      }),
+    });
+    const baseUrl = await serve(createApp(dependencies));
+
+    const response = await fetch(`${baseUrl}/api/overview`);
+
+    expect(response.status).toBe(200);
+    await expect(readJson(response)).resolves.toMatchObject({
+      system: { hostname: 'nas-test' },
+      containers: [],
+      containersAvailable: false,
+    });
+    expect(dependencies.dockerClient).toHaveBeenCalledWith('/fixture/docker.sock', { timeoutMs: 654 });
+    expect(dependencies.logger.warn).toHaveBeenCalledWith(
+      'Unable to read Docker containers: Docker API timed out after 654 ms',
+    );
   });
 });
 

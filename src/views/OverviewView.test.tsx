@@ -1,0 +1,90 @@
+// @vitest-environment jsdom
+
+import { cleanup, render, screen, within } from '@testing-library/react';
+import '@testing-library/jest-dom/vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
+import type { AppConfig, Overview } from '../types';
+import { OverviewView } from './OverviewView';
+
+const config: AppConfig = {
+  settings: { title: 'HomeLab', location: 'Home', refreshInterval: 5000 },
+  services: [],
+  topology: { nodes: [], links: [] },
+};
+
+const overview: Overview = {
+  timestamp: '2026-10-21T07:17:00.000Z',
+  system: {
+    hostname: 'Synology DS920+',
+    platform: 'linux',
+    uptime: 3600,
+    loadAverage: [0.11, 0.23, 0.27],
+  },
+  cpu: { usage: 37.6, cores: 4 },
+  memory: { used: 4, total: 16, percent: 25 },
+  disks: [],
+  network: { rxBytesPerSecond: 0, txBytesPerSecond: 0, interfaces: [] },
+  temperatures: [],
+  services: [],
+  containers: [],
+  containersAvailable: true,
+};
+
+afterEach(cleanup);
+
+describe('OverviewView CPU telemetry', () => {
+  it('prioritizes the current utilization and labels load averages as 1, 5, and 15 minute values', () => {
+    render(
+      <OverviewView config={config} overview={overview} networkMode="internal" onNavigate={vi.fn()} />,
+    );
+
+    const telemetry = screen.getByRole('region', { name: '实时遥测' });
+    expect(within(telemetry).getByText('CPU 使用率')).toBeInTheDocument();
+    expect(within(telemetry).getByText('38%')).toBeInTheDocument();
+    expect(within(telemetry).getByText('1 / 5 / 15 分钟负载')).toBeInTheDocument();
+    expect(within(telemetry).getByText('0.11 · 0.23 · 0.27')).toBeInTheDocument();
+    expect(within(telemetry).getByText('0 / 0')).toBeInTheDocument();
+    expect(screen.getByRole('progressbar', { name: '当前 CPU 使用率' }))
+      .toHaveAttribute('aria-valuenow', '38');
+  });
+
+  it('marks CPU utilization unavailable when overview data is missing', () => {
+    render(
+      <OverviewView config={config} overview={null} networkMode="internal" onNavigate={vi.fn()} />,
+    );
+
+    const meter = screen.getByRole('progressbar', { name: '当前 CPU 使用率' });
+    expect(meter).not.toHaveAttribute('aria-valuenow');
+    expect(meter).toHaveAttribute('aria-valuetext', '暂无数据');
+  });
+
+  it('distinguishes an unavailable Docker source from a valid empty list', () => {
+    render(
+      <OverviewView
+        config={config}
+        overview={{ ...overview, containersAvailable: false }}
+        networkMode="internal"
+        onNavigate={vi.fn()}
+      />,
+    );
+
+    expect(screen.getByText('未连接')).toBeInTheDocument();
+    expect(screen.queryByText('0 / 0')).not.toBeInTheDocument();
+  });
+
+  it('marks retained telemetry as stale when the backend connection is lost', () => {
+    render(
+      <OverviewView
+        config={config}
+        overview={overview}
+        connected={false}
+        networkMode="internal"
+        onNavigate={vi.fn()}
+      />,
+    );
+
+    expect(screen.getByText('SYSTEM OFFLINE')).toBeInTheDocument();
+    expect(screen.getByText('STALE TELEMETRY')).toBeInTheDocument();
+    expect(screen.getByText('HOST DATA STALE')).toBeInTheDocument();
+  });
+});

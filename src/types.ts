@@ -83,6 +83,7 @@ export interface Overview {
   temperatures: Array<{ label: string; value: number }>;
   services: ServiceHealth[];
   containers: ContainerInfo[];
+  containersAvailable: boolean;
 }
 
 export interface MetricPoint {

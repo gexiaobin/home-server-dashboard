@@ -257,7 +257,13 @@ export function App() {
         )}
         <main className={`page-content page-${view}`}>
           {view === 'overview' && (
-            <OverviewView config={config} overview={overview} networkMode={networkMode} onNavigate={navigate} />
+            <OverviewView
+              config={config}
+              overview={overview}
+              connected={Boolean(overview) && !error}
+              networkMode={networkMode}
+              onNavigate={navigate}
+            />
           )}
           {view === 'services' && (
             <ServicesView
@@ -271,7 +277,7 @@ export function App() {
             />
           )}
           <Suspense fallback={<div className="view-loading"><LoaderCircle size={21} className="spin" /><span>加载工作区</span></div>}>
-            {view === 'monitor' && <MonitorView overview={overview} history={history} />}
+            {view === 'monitor' && <MonitorView overview={overview} history={history} connected={Boolean(overview) && !error} />}
             {view === 'topology' && <TopologyView topology={config.topology} services={config.services} health={overview?.services || []} networkMode={networkMode} />}
             {view === 'settings' && <SettingsView config={config} saving={saving} onSave={saveConfig} />}
           </Suspense>

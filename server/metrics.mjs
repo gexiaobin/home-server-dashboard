@@ -232,6 +232,7 @@ export class MetricsCollector {
     procRoot,
     sysRoot,
     diskPaths,
+    hostDisplayName,
     fsImpl = fs,
     osImpl = os,
     now = () => Date.now(),
@@ -241,6 +242,9 @@ export class MetricsCollector {
     this.procRoot = procRoot;
     this.sysRoot = sysRoot;
     this.diskPaths = configuredDiskPaths(diskPaths);
+    this.hostDisplayName = typeof hostDisplayName === 'string' && hostDisplayName.trim()
+      ? hostDisplayName.trim()
+      : null;
     this.fs = fsImpl;
     this.os = osImpl;
     this.now = now;
@@ -336,7 +340,7 @@ export class MetricsCollector {
 
     return {
       system: {
-        hostname: this.os.hostname(),
+        hostname: this.hostDisplayName || this.os.hostname(),
         platform: this.os.platform(),
         uptime: this.os.uptime(),
         loadAverage: this.os.loadavg(),

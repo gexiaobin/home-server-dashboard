@@ -77,6 +77,7 @@ docker compose -f docker-compose.yml -f docker-compose.database-file.yml ps
 - 将页面配置写入 PostgreSQL 表 `home_server_dashboard_config`。
 - 首次连接空表时，如 `data/config.json` 存在，会一次性导入旧配置。
 - 只读挂载宿主 `/proc`、`/sys` 与 `/volume1` 以采集指标。
+- 使用 `HOST_DISPLAY_NAME` 显示 NAS 型号或自定义设备名，避免展示容器 ID。
 - 使用只读容器文件系统、移除 Linux capabilities，并限制容器日志大小。
 - 不挂载 Docker Socket。
 

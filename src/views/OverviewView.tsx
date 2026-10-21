@@ -19,6 +19,7 @@ import type { ViewId } from '../components/Sidebar';
 interface OverviewViewProps {
   config: AppConfig;
   overview: Overview | null;
+  connected?: boolean;
   networkMode: NetworkMode;
   onNavigate: (view: ViewId) => void;
 }
@@ -27,7 +28,8 @@ function healthByService(health: ServiceHealth[]) {
   return new Map(health.map((item) => [item.id, item]));
 }
 
-export function OverviewView({ config, overview, networkMode, onNavigate }: OverviewViewProps) {
+export function OverviewView({ config, overview, connected, networkMode, onNavigate }: OverviewViewProps) {
+  const isConnected = connected ?? Boolean(overview);
   const serviceIds = new Set(config.services.map((service) => service.id));
   const currentHealth = overview?.services.filter((item) => serviceIds.has(item.id)) ?? [];
   const statusById = healthByService(currentHealth);
@@ -39,6 +41,12 @@ export function OverviewView({ config, overview, networkMode, onNavigate }: Over
   const uncheckedCount = config.services.filter((service) => service.check.type === 'none').length;
   const pendingCount = config.services.filter((service) => !statusById.has(service.id)).length;
   const disk = overview?.disks[0];
+  const cpuUsage = overview ? Math.max(0, Math.min(100, Math.round(overview.cpu.usage))) : null;
+  const loadAverage = overview?.system.loadAverage.slice(0, 3) ?? [];
+  const loadAverageLabel = loadAverage.length
+    ? loadAverage.map((value) => value.toFixed(2)).join(' · ')
+    : '--';
+  const runningContainerCount = overview?.containers.filter((item) => item.state.toLowerCase() === 'running').length ?? 0;
   const date = new Intl.DateTimeFormat('zh-CN', {
     year: 'numeric',
     month: '2-digit',
@@ -56,15 +64,15 @@ export function OverviewView({ config, overview, networkMode, onNavigate }: Over
         </div>
         <div className="overview-date">
           <strong>{date}</strong>
-          <span className={overview ? '' : 'is-stale'}><i className="live-pulse" /> {overview ? 'LIVE SYSTEM' : 'SYSTEM OFFLINE'}</span>
+          <span className={isConnected ? '' : 'is-stale'}><i className="live-pulse" /> {isConnected ? 'LIVE SYSTEM' : 'SYSTEM OFFLINE'}</span>
         </div>
       </header>
 
-      <section className={`system-ribbon ${downServices.length > 0 || !overview ? 'has-alert' : ''}`} aria-label="系统状态摘要">
+      <section className={`system-ribbon ${downServices.length > 0 || !isConnected ? 'has-alert' : ''}`} aria-label="系统状态摘要">
         <div className="system-ribbon-primary">
-          {downServices.length > 0 || !overview ? <AlertTriangle size={18} /> : <CheckCircle2 size={18} />}
-          <strong>{!overview ? '正在等待系统遥测' : downServices.length > 0 ? `${downServices.length} 项服务需要关注` : '核心系统运行正常'}</strong>
-          <span>{overview ? 'REALTIME TELEMETRY' : 'TELEMETRY UNAVAILABLE'}</span>
+          {downServices.length > 0 || !isConnected ? <AlertTriangle size={18} /> : <CheckCircle2 size={18} />}
+          <strong>{!overview ? '正在等待系统遥测' : !isConnected ? '系统连接已中断' : downServices.length > 0 ? `${downServices.length} 项服务需要关注` : '核心系统运行正常'}</strong>
+          <span>{isConnected ? 'REALTIME TELEMETRY' : overview ? 'STALE TELEMETRY' : 'TELEMETRY UNAVAILABLE'}</span>
         </div>
         <div><b>{config.topology.nodes.length}</b><span>拓扑节点</span></div>
         <div><b>{upCount}</b><span>服务在线</span></div>
@@ -135,7 +143,7 @@ export function OverviewView({ config, overview, networkMode, onNavigate }: Over
         <section className="environment-panel">
           <img src={datacenterImage} alt="数据中心机柜示意图" />
           <div className="environment-content">
-            <div className={`environment-status ${overview ? '' : 'is-stale'}`}><i className="live-pulse" /> {overview ? 'HOST CONNECTED' : 'HOST DATA UNAVAILABLE'}</div>
+            <div className={`environment-status ${isConnected ? '' : 'is-stale'}`}><i className="live-pulse" /> {isConnected ? 'HOST CONNECTED' : overview ? 'HOST DATA STALE' : 'HOST DATA UNAVAILABLE'}</div>
             <h2>家庭数据中心</h2>
             <p>{overview?.system.hostname || '正在读取主机信息'} · {overview ? formatUptime(overview.system.uptime) : '等待数据'}</p>
             <div className="environment-metrics">
@@ -152,11 +160,11 @@ export function OverviewView({ config, overview, networkMode, onNavigate }: Over
             <div><AlertTriangle size={16} /><h2>运行关注</h2></div>
             <span>{String(downServices.length).padStart(2, '0')}</span>
           </div>
-          {!overview ? (
+          {!isConnected ? (
             <div className="attention-clear is-unavailable">
               <AlertTriangle size={28} />
-              <strong>系统状态暂不可用</strong>
-              <span>请检查页面顶部的连接提示</span>
+              <strong>{overview ? '系统连接已中断' : '系统状态暂不可用'}</strong>
+              <span>{overview ? '正在显示最近一次采样，请检查连接提示' : '请检查页面顶部的连接提示'}</span>
             </div>
           ) : downServices.length > 0 ? (
             <div className="attention-list">
@@ -186,8 +194,29 @@ export function OverviewView({ config, overview, networkMode, onNavigate }: Over
       </div>
 
       <section className="overview-telemetry" aria-label="实时遥测">
-        <div><span><Cpu size={16} /> CPU 负载</span><strong>{overview?.system.loadAverage.length ? overview.system.loadAverage.map((value) => value.toFixed(2)).join(' · ') : '--'}</strong></div>
-        <div><span><HardDrive size={16} /> 可见容器</span><strong>{overview?.containers.length ? `${overview.containers.filter((item) => item.state === 'running').length} / ${overview.containers.length}` : '--'}</strong></div>
+        <div className="overview-telemetry-cpu">
+          <span><Cpu size={16} /> CPU 使用率</span>
+          <strong>{cpuUsage === null ? '--' : `${cpuUsage}%`}</strong>
+          <span
+            className="cpu-usage-track"
+            role="progressbar"
+            aria-label="当前 CPU 使用率"
+            aria-valuemin={0}
+            aria-valuemax={100}
+            aria-valuenow={cpuUsage ?? undefined}
+            aria-valuetext={cpuUsage === null ? '暂无数据' : `${cpuUsage}%`}
+          >
+            <i style={{ width: `${cpuUsage ?? 0}%` }} />
+          </span>
+          <small className="cpu-load-detail">
+            <span>1 / 5 / 15 分钟负载</span>
+            <b>{loadAverageLabel}</b>
+          </small>
+        </div>
+        <div>
+          <span><HardDrive size={16} /> 可见容器</span>
+          <strong>{!overview ? '--' : overview.containersAvailable ? `${runningContainerCount} / ${overview.containers.length}` : '未连接'}</strong>
+        </div>
         <div><span><Network size={16} /> 下载</span><strong>{overview ? formatRate(overview.network.rxBytesPerSecond) : '--'}</strong></div>
         <div><span><Network size={16} /> 上传</span><strong>{overview ? formatRate(overview.network.txBytesPerSecond) : '--'}</strong></div>
       </section>

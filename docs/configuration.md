@@ -18,6 +18,8 @@
 | `DATABASE_QUERY_TIMEOUT_MS` | `5000` | 数据库查询和语句超时，单位毫秒 |
 | `DATA_PATH` | `./data` | 旧 `config.json` 的一次性迁移目录，也供本地文件模式使用 |
 | `HOST_STORAGE_PATH` | `/volume1` | 用于容量统计的宿主存储路径，只读挂载 |
+| `HOST_DISPLAY_NAME` | 空 | 概览和监控页显示的设备名称；为空时会显示容器 hostname |
+| `DOCKER_API_TIMEOUT_MS` | `3000` | 可选 Docker 容器列表查询的总超时，单位毫秒 |
 | `TZ` | `Asia/Shanghai` | 容器时区 |
 | `SERVICE_CHECK_TIMEOUT_MS` | `5000` | HTTP/TCP 探测超时，单位毫秒，必须为正整数 |
 | `SERVICE_ICON_TIMEOUT_MS` | `5000` | 发现并抓取单个服务真实图标的总超时，单位毫秒，必须为正整数 |

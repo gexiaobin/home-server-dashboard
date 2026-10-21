@@ -35,6 +35,8 @@ DATABASE_URL_FILE=
 DATABASE_URL_FILE_PATH=/volume1/docker/home-server-dashboard/secrets/database_url
 DATA_PATH=/volume1/docker/home-server-dashboard/data
 HOST_STORAGE_PATH=/volume1
+HOST_DISPLAY_NAME=Synology DS920+
+DOCKER_API_TIMEOUT_MS=3000
 TZ=Asia/Shanghai
 SERVICE_CHECK_TIMEOUT_MS=5000
 SERVICE_ICON_TIMEOUT_MS=5000
@@ -109,7 +111,7 @@ Destination: http://127.0.0.1:3000
 
 ## 7. Docker Socket：默认禁用
 
-展示 Docker 容器列表需要访问 Docker API，但这项权限风险很高。基础 `docker-compose.yml` 没有挂载 Socket。
+展示 Docker 容器列表需要访问 Docker API，但这项权限风险很高。基础 `docker-compose.yml` 没有挂载 Socket，所以“可见容器”默认显示为未启用，而不是容器总数。启用后，应用只调用 `GET /containers/json?all=1`，单次查询受 `DOCKER_API_TIMEOUT_MS` 限制；查询超时或失败时概览接口仍会正常返回，并把容器列表降级为空数组。
 
 确需使用时，把 `docker-compose.socket.yml` 同时加入 Project 配置，或通过 SSH 执行：
 
