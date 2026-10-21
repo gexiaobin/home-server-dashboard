@@ -115,6 +115,47 @@ describe('detectIconContentType', () => {
 });
 
 describe('resolveServiceIcon', () => {
+  it.each([401, 403])('discovers a declared icon from an HTTP %i authentication page', async (statusCode) => {
+    const baseUrl = await serve((request, response) => {
+      if (request.url === '/cgi-bin/luci/admin/quickstart/') {
+        response.writeHead(statusCode, {
+          'content-type': 'text/html',
+          'x-luci-login-required': 'yes',
+        }).end(`
+          <link rel="icon" type="image/png" sizes="192x192"
+            href="/luci-static/argon/icon/android-icon-192x192.png">
+        `);
+        return;
+      }
+      if (request.url === '/luci-static/argon/icon/android-icon-192x192.png') {
+        response.writeHead(200, { 'content-type': 'image/png' }).end(PNG);
+        return;
+      }
+      response.writeHead(404).end();
+    });
+
+    await expect(resolveServiceIcon(`${baseUrl}/cgi-bin/luci/admin/quickstart/`))
+      .resolves.toMatchObject({ body: PNG, contentType: 'image/png' });
+  });
+
+  it('still requires a successful response for icons declared by an authentication page', async () => {
+    const baseUrl = await serve((request, response) => {
+      if (request.url === '/admin') {
+        response.writeHead(403, { 'content-type': 'text/html' })
+          .end('<link rel="icon" href="/protected-icon.png">');
+        return;
+      }
+      if (request.url === '/protected-icon.png') {
+        response.writeHead(403, { 'content-type': 'image/png' }).end(PNG);
+        return;
+      }
+      response.writeHead(404).end();
+    });
+
+    await expect(resolveServiceIcon(`${baseUrl}/admin`))
+      .rejects.toBeInstanceOf(ServiceIconNotFoundError);
+  });
+
   it('reads the service page and tries declared icons in priority order', async () => {
     const requestResource = vi.fn(async (url) => {
       const target = String(url);
@@ -303,6 +344,17 @@ describe('resolveServiceIcon', () => {
 });
 
 describe('requestServiceResource', () => {
+  it('only returns non-success response bodies when their status is explicitly accepted', async () => {
+    const body = Buffer.from('<link rel="icon" href="/icon.png">');
+    const baseUrl = await serve((_request, response) => {
+      response.writeHead(403, { 'content-type': 'text/html' }).end(body);
+    });
+
+    await expect(requestServiceResource(baseUrl)).rejects.toThrow('Upstream returned HTTP 403');
+    await expect(requestServiceResource(baseUrl, { acceptedStatusCodes: [401, 403] }))
+      .resolves.toMatchObject({ status: 403, body });
+  });
+
   it('follows same-host redirects and enforces the response byte limit', async () => {
     const baseUrl = await serve((request, response) => {
       if (request.url === '/start') {

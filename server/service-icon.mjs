@@ -12,6 +12,7 @@ const DEFAULT_ICON_LIMIT = 1024 * 1024;
 const DEFAULT_POSITIVE_TTL_MS = 6 * 60 * 60 * 1000;
 const DEFAULT_NEGATIVE_TTL_MS = 60 * 1000;
 const MAX_ICON_CANDIDATES = 12;
+const AUTHENTICATION_PAGE_STATUS_CODES = [401, 403];
 
 const BLOCKED_IPV4 = new BlockList();
 for (const [network, prefix] of [
@@ -159,6 +160,7 @@ function createPinnedLookup(records) {
 
 function requestOnce(target, {
   accept,
+  acceptedStatusCodes,
   allowInsecureTls,
   lookup,
   maxBytes,
@@ -189,7 +191,8 @@ function requestOnce(target, {
     }, (response) => {
       const status = response.statusCode || 0;
       const headers = response.headers;
-      if (status < 200 || status >= 300) {
+      const isSuccessful = status >= 200 && status < 300;
+      if (!isSuccessful && !acceptedStatusCodes.includes(status)) {
         response.destroy();
         finish(null, { status, headers, body: Buffer.alloc(0), url: target });
         return;
@@ -231,6 +234,7 @@ function requestOnce(target, {
 
 export async function requestServiceResource(url, {
   accept = '*/*',
+  acceptedStatusCodes = [],
   allowInsecureTls = false,
   lookup = dnsLookup,
   maxBytes = DEFAULT_ICON_LIMIT,
@@ -250,6 +254,7 @@ export async function requestServiceResource(url, {
     if (remainingMs <= 0) throw new Error(`Request timed out after ${timeoutMs} ms`);
     const result = await requestOnce(target, {
       accept,
+      acceptedStatusCodes,
       allowInsecureTls,
       lookup: pinnedLookup,
       maxBytes,
@@ -265,7 +270,8 @@ export async function requestServiceResource(url, {
       target = next;
       continue;
     }
-    if (result.status < 200 || result.status >= 300) {
+    if ((result.status < 200 || result.status >= 300)
+      && !acceptedStatusCodes.includes(result.status)) {
       throw new Error(`Upstream returned HTTP ${result.status}`);
     }
     return result;
@@ -388,6 +394,7 @@ export async function resolveServiceIcon(serviceUrl, {
   try {
     const page = await requestWithinDeadline(configuredUrl, {
       accept: 'text/html,application/xhtml+xml;q=0.9,*/*;q=0.1',
+      acceptedStatusCodes: AUTHENTICATION_PAGE_STATUS_CODES,
       allowInsecureTls,
       maxBytes: htmlLimit,
     });
