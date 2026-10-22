@@ -14,6 +14,8 @@ export const DEFAULT_CONFIG = Object.freeze({
   topology: Object.freeze({
     source: 'manual',
     refreshInterval: 15_000,
+    vmHostServiceId: '',
+    dockerHostServiceId: '',
     nodes: Object.freeze([]),
     links: Object.freeze([]),
   }),
@@ -110,6 +112,12 @@ export function validateConfig(config) {
           requireHttpUrl(service.externalUrl, `services[${index}].externalUrl`);
         }
       }
+      if (service.scope !== undefined && !['internal', 'external'].includes(service.scope)) {
+        throw new ConfigValidationError(`services[${index}].scope must be internal or external`);
+      }
+      if (service.runtime !== undefined && !['infrastructure', 'vm', 'docker'].includes(service.runtime)) {
+        throw new ConfigValidationError(`services[${index}].runtime must be infrastructure, vm, or docker`);
+      }
       if (service.description !== undefined && typeof service.description !== 'string') {
         throw new ConfigValidationError(`services[${index}].description must be a string`);
       }
@@ -159,6 +167,11 @@ export function validateConfig(config) {
       const interval = config.topology.refreshInterval;
       if (!Number.isInteger(interval) || interval < 5_000 || interval > 300_000) {
         throw new ConfigValidationError('topology.refreshInterval must be an integer between 5000 and 300000');
+      }
+    }
+    for (const field of ['vmHostServiceId', 'dockerHostServiceId']) {
+      if (config.topology[field] !== undefined && typeof config.topology[field] !== 'string') {
+        throw new ConfigValidationError(`topology.${field} must be a string`);
       }
     }
     const nodeIds = new Set();
@@ -214,6 +227,41 @@ export function normalizeConfig(defaults, config) {
     ?? '';
   const topologyDefaults = defaults.topology ?? DEFAULT_CONFIG.topology;
   const topologyConfig = config.topology ?? {};
+  const services = clone(config.services ?? defaults.services ?? []).map((service) => {
+    const normalized = {
+      description: '',
+      scope: 'internal',
+      runtime: 'infrastructure',
+      category: '其他',
+      icon: 'default',
+      iconAllowInsecureTls: false,
+      favorite: false,
+      check: { type: 'none' },
+      ...service,
+      externalUrl: service.externalUrl?.trim() || '',
+    };
+    if (normalized.scope === 'external') {
+      normalized.externalUrl = '';
+      normalized.check = { type: 'none' };
+    }
+    return normalized;
+  });
+  const hostServiceIds = new Set(services
+    .filter((service) => service.scope === 'internal' && service.runtime === 'infrastructure')
+    .map((service) => service.id));
+  const requestedVmHostServiceId = (topologyConfig.vmHostServiceId
+    ?? topologyDefaults.vmHostServiceId
+    ?? '').trim();
+  const requestedDockerHostServiceId = (topologyConfig.dockerHostServiceId
+    ?? topologyDefaults.dockerHostServiceId
+    ?? '').trim();
+  const vmHostServiceId = hostServiceIds.has(requestedVmHostServiceId)
+    ? requestedVmHostServiceId
+    : '';
+  const dockerHostServiceId = hostServiceIds.has(requestedDockerHostServiceId)
+    && requestedDockerHostServiceId !== vmHostServiceId
+    ? requestedDockerHostServiceId
+    : '';
   return {
     ...clone(defaults),
     ...clone(config),
@@ -222,21 +270,14 @@ export function normalizeConfig(defaults, config) {
       ...(config.settings ?? {}),
       hostDisplayName: hostDisplayName.trim(),
     },
-    services: clone(config.services ?? defaults.services ?? []).map((service) => ({
-      description: '',
-      category: '其他',
-      icon: 'default',
-      iconAllowInsecureTls: false,
-      favorite: false,
-      check: { type: 'none' },
-      ...service,
-      externalUrl: service.externalUrl?.trim() || '',
-    })),
+    services,
     topology: {
       source: topologyConfig.source ?? topologyDefaults.source ?? 'manual',
       refreshInterval: topologyConfig.refreshInterval
         ?? topologyDefaults.refreshInterval
         ?? 15_000,
+      vmHostServiceId,
+      dockerHostServiceId,
       nodes: clone(topologyConfig.nodes ?? topologyDefaults.nodes ?? []).map((node) => ({
         type: 'server',
         x: 50,

@@ -89,6 +89,8 @@ describe('ConfigStore', () => {
       },
       services: [{
         description: '',
+        scope: 'internal',
+        runtime: 'infrastructure',
         category: '其他',
         icon: 'default',
         iconAllowInsecureTls: false,
@@ -98,6 +100,8 @@ describe('ConfigStore', () => {
       topology: {
         source: 'manual',
         refreshInterval: 15_000,
+        vmHostServiceId: '',
+        dockerHostServiceId: '',
         nodes: [{ type: 'server', x: 50, y: 50, ...config.topology.nodes[0] }],
         links: [],
       },
@@ -130,6 +134,8 @@ describe('ConfigStore', () => {
       id: 'legacy-nas',
       url: 'https://nas.home.arpa:5001',
       externalUrl: '',
+      scope: 'internal',
+      runtime: 'infrastructure',
       iconAllowInsecureTls: false,
     });
     expect(config.settings.hostDisplayName).toBe('');
@@ -214,6 +220,49 @@ describe('ConfigStore', () => {
     })).rejects.toThrow('services[0].externalUrl must be a string');
   });
 
+  it('normalizes external bookmarks to one public URL without health checks', async () => {
+    const dataDir = await createTemporaryDirectory();
+    const store = new ConfigStore({
+      dataDir,
+      defaultsFile: path.join(dataDir, 'missing-defaults.json'),
+    });
+
+    const saved = await store.put({
+      services: [{
+        id: 'aliyun',
+        name: 'Alibaba Cloud',
+        url: 'https://home.console.aliyun.com/',
+        externalUrl: 'https://legacy.example.com/',
+        scope: 'external',
+        runtime: 'infrastructure',
+        check: { type: 'http', url: 'https://home.console.aliyun.com/' },
+      }],
+    });
+
+    expect(saved.services[0]).toMatchObject({
+      url: 'https://home.console.aliyun.com/',
+      externalUrl: '',
+      scope: 'external',
+      runtime: 'infrastructure',
+      check: { type: 'none' },
+    });
+  });
+
+  it('validates service scope and runtime classifications', async () => {
+    const dataDir = await createTemporaryDirectory();
+    const store = new ConfigStore({
+      dataDir,
+      defaultsFile: path.join(dataDir, 'missing-defaults.json'),
+    });
+
+    await expect(store.put({
+      services: [{ id: 'bad-scope', name: 'Bad scope', url: 'https://example.com', scope: 'cloud' }],
+    })).rejects.toThrow('services[0].scope must be internal or external');
+    await expect(store.put({
+      services: [{ id: 'bad-runtime', name: 'Bad runtime', url: 'https://example.com', runtime: 'link' }],
+    })).rejects.toThrow('services[0].runtime must be infrastructure, vm, or docker');
+  });
+
   it('rejects invalid input without creating a config file', async () => {
     const dataDir = await createTemporaryDirectory();
     const store = new ConfigStore({
@@ -259,11 +308,34 @@ describe('ConfigStore', () => {
     });
 
     const saved = await store.put({
-      topology: { source: 'ikuai', refreshInterval: 30_000 },
+      services: [
+        {
+          id: 'vmware-esxi',
+          name: 'VMware ESXi',
+          url: 'https://esxi.home.arpa',
+          scope: 'internal',
+          runtime: 'infrastructure',
+        },
+        {
+          id: 'synology-dsm',
+          name: 'Synology DSM',
+          url: 'https://nas.home.arpa:5001',
+          scope: 'internal',
+          runtime: 'infrastructure',
+        },
+      ],
+      topology: {
+        source: 'ikuai',
+        refreshInterval: 30_000,
+        vmHostServiceId: '  vmware-esxi  ',
+        dockerHostServiceId: 'synology-dsm',
+      },
     });
     expect(saved.topology).toMatchObject({
       source: 'ikuai',
       refreshInterval: 30_000,
+      vmHostServiceId: 'vmware-esxi',
+      dockerHostServiceId: 'synology-dsm',
       nodes: [],
       links: [],
     });
@@ -272,6 +344,70 @@ describe('ConfigStore', () => {
       .rejects.toThrow('topology.source must be manual or ikuai');
     await expect(store.put({ topology: { refreshInterval: 1_000 } }))
       .rejects.toThrow('topology.refreshInterval must be an integer between 5000 and 300000');
+    await expect(store.put({ topology: { vmHostServiceId: 123 } }))
+      .rejects.toThrow('topology.vmHostServiceId must be a string');
+  });
+
+  it('clears invalid and duplicate topology host associations without rejecting old config', async () => {
+    const dataDir = await createTemporaryDirectory();
+    await mkdir(dataDir, { recursive: true });
+    const services = [
+      {
+        id: 'host',
+        name: 'Infrastructure host',
+        url: 'https://host.home.arpa',
+        scope: 'internal',
+        runtime: 'infrastructure',
+      },
+      {
+        id: 'vm',
+        name: 'Virtual machine',
+        url: 'http://vm.home.arpa',
+        scope: 'internal',
+        runtime: 'vm',
+      },
+      {
+        id: 'docker',
+        name: 'Docker app',
+        url: 'http://docker.home.arpa',
+        scope: 'internal',
+        runtime: 'docker',
+      },
+      {
+        id: 'bookmark',
+        name: 'Cloud bookmark',
+        url: 'https://cloud.example.com',
+        scope: 'external',
+        runtime: 'infrastructure',
+      },
+    ];
+    await writeFile(path.join(dataDir, 'config.json'), JSON.stringify({
+      services,
+      topology: {
+        vmHostServiceId: 'vm',
+        dockerHostServiceId: 'bookmark',
+      },
+    }), 'utf8');
+    const store = new ConfigStore({
+      dataDir,
+      defaultsFile: path.join(dataDir, 'missing-defaults.json'),
+    });
+
+    await expect(store.get()).resolves.toMatchObject({
+      topology: { vmHostServiceId: '', dockerHostServiceId: '' },
+    });
+
+    const duplicate = await store.put({
+      services,
+      topology: {
+        vmHostServiceId: 'host',
+        dockerHostServiceId: 'host',
+      },
+    });
+    expect(duplicate.topology).toMatchObject({
+      vmHostServiceId: 'host',
+      dockerHostServiceId: '',
+    });
   });
 
   it('never persists deployment addresses or secrets from imported topology config', async () => {
@@ -295,6 +431,8 @@ describe('ConfigStore', () => {
     expect(saved.topology).toEqual({
       source: 'ikuai',
       refreshInterval: 15_000,
+      vmHostServiceId: '',
+      dockerHostServiceId: '',
       nodes: [],
       links: [],
     });

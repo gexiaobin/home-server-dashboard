@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 
-import { cleanup, fireEvent, render, screen } from '@testing-library/react';
+import { cleanup, fireEvent, render, screen, within } from '@testing-library/react';
 import '@testing-library/jest-dom/vitest';
 import { afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
 import type { AppConfig, Service } from '../types';
@@ -14,8 +14,25 @@ const service: Service = {
   description: 'Passwords',
   url: 'http://vault.home.arpa',
   externalUrl: 'https://vault.example.com',
+  scope: 'internal',
+  runtime: 'docker',
   category: '安全',
   icon: 'shield',
+  iconAllowInsecureTls: false,
+  favorite: true,
+  check: { type: 'none' },
+};
+
+const bookmark: Service = {
+  id: 'aliyun',
+  name: '阿里云控制台',
+  description: 'Cloud console',
+  url: 'https://console.aliyun.com/',
+  externalUrl: '',
+  scope: 'external',
+  runtime: 'infrastructure',
+  category: '云服务',
+  icon: 'globe',
   iconAllowInsecureTls: false,
   favorite: true,
   check: { type: 'none' },
@@ -27,6 +44,8 @@ const config: AppConfig = {
   topology: {
     source: 'manual',
     refreshInterval: 15_000,
+    vmHostServiceId: '',
+    dockerHostServiceId: '',
     nodes: [{ id: 'vault', label: 'Vault', type: 'container', serviceId: service.id, x: 50, y: 50 }],
     links: [],
   },
@@ -62,6 +81,33 @@ describe('network mode navigation', () => {
     expect(screen.getByRole('button', { name: 'Vaultwarden 未配置互联网地址' })).toBeDisabled();
   });
 
+  it('separates external bookmarks and always opens their public URL without health metadata', () => {
+    const props = {
+      services: [service, bookmark],
+      health: [
+        { id: service.id, status: 'up' as const, latency: 12, checkedAt: '2026-10-22T08:00:00.000Z' },
+        { id: bookmark.id, status: 'up' as const, latency: 8, checkedAt: '2026-10-22T08:00:00.000Z' },
+      ],
+      search: '',
+      onAdd: vi.fn(),
+      onEdit: vi.fn(),
+      onToggleFavorite: vi.fn(),
+    };
+    const { rerender } = render(<ServicesView {...props} networkMode="internal" />);
+    const internalDirectory = screen.getByRole('region', { name: '内网服务' });
+    const bookmarkDirectory = screen.getByRole('region', { name: '外网书签' });
+
+    expect(within(internalDirectory).getByRole('link', { name: '打开 Vaultwarden' })).toHaveAttribute('href', service.url);
+    expect(within(bookmarkDirectory).getByRole('link', { name: '打开 阿里云控制台' })).toHaveAttribute('href', bookmark.url);
+    expect(within(bookmarkDirectory).getByText('外网书签', { selector: '.bookmark-scope-label' })).toBeInTheDocument();
+    expect(within(bookmarkDirectory).queryByText('最近检测')).not.toBeInTheDocument();
+    expect(within(bookmarkDirectory).queryByText('在线')).not.toBeInTheDocument();
+
+    rerender(<ServicesView {...props} networkMode="external" />);
+    expect(within(screen.getByRole('region', { name: '外网书签' })).getByRole('link', { name: '打开 阿里云控制台' }))
+      .toHaveAttribute('href', bookmark.url);
+  });
+
   it('uses the active URL on the overview launch surface', () => {
     render(<OverviewView config={config} overview={null} networkMode="external" onNavigate={vi.fn()} />);
 
@@ -89,7 +135,7 @@ describe('network mode navigation', () => {
   });
 
   it('uses the active URL in the topology inspector', () => {
-    const { container } = render(
+    render(
       <TopologyView
         topology={config.topology}
         services={config.services}
@@ -98,7 +144,7 @@ describe('network mode navigation', () => {
       />,
     );
 
-    fireEvent.click(container.querySelector('.topology-node') as HTMLButtonElement);
+    fireEvent.click(screen.getByRole('button', { name: /Vaultwarden/ }));
     expect(screen.getByRole('link', { name: '打开服务' })).toHaveAttribute('href', service.externalUrl);
   });
 });

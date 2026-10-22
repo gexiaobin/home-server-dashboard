@@ -56,7 +56,7 @@ iKuai 动态拓扑同样推荐使用 `docker-compose.ikuai.yml`。在 iKuai Web 
 
 启用 Basic Auth 后，除 `/api/health` 外的页面和 API 都需要登录。Basic Auth 仅编码凭据而不加密传输，因此必须同时使用 HTTPS。如果密码包含 Compose 插值字符（例如 `$`），请按 Compose `.env` 语法使用单引号或正确转义。
 
-服务目录中的图标由 Express 根据数据库内每个服务的内网 `url` 访问目标页面，并解析页面声明的 favicon，包括页面明确引用的公网 HTTPS CDN 图标。图标由服务端代理，浏览器不会直接访问该第三方地址；切换到外网模式也不会改变用于发现图标的内网 `url`。
+服务目录中的图标由 Express 根据每个条目的 `url` 访问目标页面，并解析页面声明的 favicon，包括页面明确引用的公网 HTTPS CDN 图标。内网服务的 `url` 是内网地址，外网书签的 `url` 是公开书签地址。图标由服务端代理，浏览器不会直接访问该第三方地址；切换网络模式不会改变用于发现图标的 `url`。
 
 抓取会限制总超时、响应大小和候选数，并根据实际字节判断图片类型。跨域图标只允许 HTTPS 默认端口，DNS 解析结果必须全部是公网地址，实际连接会固定到已校验地址；每个候选地址的重定向必须保持在该候选自身的 origin。由于服务页面能够指定第三方图标主机，只应配置可信页面，并注意第三方会看到 NAS 的出口 IP。
 
@@ -81,6 +81,8 @@ iKuai 动态拓扑同样推荐使用 `docker-compose.ikuai.yml`。在 iKuai Web 
       "description": "存储、备份与系统管理",
       "url": "https://nas.home.arpa:5001",
       "externalUrl": "https://nas.example.com",
+      "scope": "internal",
+      "runtime": "infrastructure",
       "category": "基础设施",
       "icon": "server",
       "iconAllowInsecureTls": false,
@@ -91,8 +93,10 @@ iKuai 动态拓扑同样推荐使用 `docker-compose.ikuai.yml`。在 iKuai Web 
     }
   ],
   "topology": {
-    "source": "manual",
+    "source": "ikuai",
     "refreshInterval": 15000,
+    "vmHostServiceId": "vmware-esxi",
+    "dockerHostServiceId": "synology-dsm",
     "nodes": [
       {
         "id": "nas",
@@ -118,19 +122,21 @@ iKuai 动态拓扑同样推荐使用 `docker-compose.ikuai.yml`。在 iKuai Web 
 
 ### `services[]`
 
-每个服务的 `id` 必须非空且唯一。地址字段与切换行为如下：
+每个条目的 `id` 必须非空且唯一。`scope` 决定它属于内网服务还是外网书签；`runtime` 决定内网条目是否进入某个拓扑分支。
 
 | 字段 | 必填 | 说明 |
 | --- | --- | --- |
-| `url` | 是 | 内网导航地址，也供服务端获取真实图标，并作为未单独配置 HTTP 检测地址时的目标 |
-| `externalUrl` | 否 | 互联网导航地址；为空或省略时，外网模式下该服务入口不可用，不会回退到内网地址 |
+| `scope` | 否 | `internal`（默认）或 `external`；后者作为独立外网书签显示 |
+| `runtime` | 否 | `infrastructure`（默认）、`vm` 或 `docker`；只有内网的 `vm`/`docker` 条目进入对应拓扑分支 |
+| `url` | 是 | 内网服务的内网地址，或外网书签的公开地址；也供服务端获取真实图标 |
+| `externalUrl` | 否 | 仅内网服务使用的互联网替代地址；为空时，外网模式下入口不可用且不会回退到内网地址 |
 | `iconAllowInsecureTls` | 否 | 默认 `false`；仅为此服务页面及同源图标跳过 HTTPS 证书校验，限可信内网的自签名设备使用 |
 
 两个地址只允许使用完整的 `http://` 或 `https://` URL。互联网地址建议使用 HTTPS，并且不要在 URL 中放置密码、Token 或其他秘密，因为页面配置可以通过 API 读取和导出。
 
-页面顶栏的“内网 / 外网”开关统一控制概览、服务目录和网络拓扑中的导航目标。当前模式是浏览器本地偏好，保存在当前站点来源的 `localStorage` 中，不会写入 PostgreSQL，也不包含在 JSON 配置导入导出中。它只切换打开链接，不会建立反向代理、端口转发或公网访问能力。
+页面顶栏的“内网 / 外网”开关统一控制内网服务在概览、服务目录和网络拓扑中的导航目标。外网书签始终打开自身的 `url`，不受该开关影响。当前模式是浏览器本地偏好，保存在当前站点来源的 `localStorage` 中，不会写入 PostgreSQL，也不包含在 JSON 配置导入导出中。它只切换打开链接，不会建立反向代理、端口转发或公网访问能力。
 
-`check` 控制服务端健康检查，与浏览器的当前模式相互独立。
+`check` 控制服务端健康检查，与浏览器的当前模式相互独立。外网书签会被规范化为 `check: { "type": "none" }`，并且不会进入概览健康统计。
 
 HTTP 检查：
 
@@ -165,12 +171,16 @@ TCP 检查：
 
 | 字段 | 类型 | 说明 |
 | --- | --- | --- |
-| `source` | `manual` \| `ikuai` | `manual` 使用 JSON 中保存的节点和链路；`ikuai` 从服务端部署环境配置的 iKuai v4 API 读取 |
+| `source` | `manual` \| `ikuai` | `manual` 仅按服务目录生成结构；`ikuai` 额外从服务端配置的 iKuai v4 API 获取路由状态与宿主详情 |
 | `refreshInterval` | integer | iKuai 拓扑刷新间隔，单位毫秒，允许 `5000` 到 `300000` |
-| `nodes` | array | 手工拓扑节点；iKuai 不可用时仍作为回退内容 |
-| `links` | array | 手工拓扑链路；iKuai 不可用时仍作为回退内容 |
+| `vmHostServiceId` | string | VMware ESXi 宿主对应的内网基础设施服务 ID；为空时显示通用宿主节点 |
+| `dockerHostServiceId` | string | Synology 宿主对应的内网基础设施服务 ID；为空时显示通用宿主节点 |
+| `nodes` | array | 兼容旧版导入的手工节点数据；服务目录拓扑不依赖该数组 |
+| `links` | array | 兼容旧版导入的手工链路数据；服务目录拓扑不依赖该数组 |
 
-在“系统设置 > 拓扑数据源”选择 iKuai 并保存后，拓扑页会按刷新间隔请求服务端。服务端根据 iKuai 的系统信息、下游设备、在线终端、上联 MAC 和物理接口自动生成分层拓扑，不会把 Token 交给浏览器。iKuai 没有配置、Token 失效、接口不可达或响应异常时，页面会显示回退状态并继续使用 `nodes` 和 `links`，其他页面不受影响。
+拓扑始终按固定语义生成：`Internet -> iKuai -> VMware ESXi -> 内网 VM` 与 `iKuai -> Synology -> 内网 Docker`。叶节点只来自 `scope: internal` 且明确标记为 `runtime: vm/docker` 的服务；外网书签、未分配基础设施和其他 iKuai 终端不会显示。
+
+在“系统设置 > 拓扑数据源”选择 iKuai 并保存后，拓扑页会按刷新间隔请求服务端。服务端使用 iKuai 的系统信息、下游设备、在线终端和物理接口补充路由吞吐及所选宿主的详情，不会把 Token 交给浏览器。iKuai 没有配置、Token 失效、接口不可达或响应异常时，页面会标记数据源不可用，并继续根据已登记服务生成相同的固定双分支结构，不会回退到旧版 `topology.nodes` 手工画布。
 
 动态模式需要运行容器能够访问路由器地址。路由器固件必须提供 v4 监控 API；菜单名称和返回字段可能随版本变化。不要在 `IKUAI_BASE_URL` 中嵌入账号或 Token，也不要把 Token 填入页面配置。
 
@@ -193,11 +203,11 @@ TCP 检查：
 }
 ```
 
-`source` 与 `target` 应对应节点 ID。手工模式不会主动扫描局域网；iKuai 模式只读取路由器已经维护的设备和在线终端信息，不会从应用容器发起任意网段扫描。
+`source` 与 `target` 应对应节点 ID。这些字段仅用于兼容旧版配置。服务目录模式不会主动扫描局域网；iKuai 模式只读取路由器已经维护的信息，并在返回给页面前投影为已登记服务拓扑，不会从应用容器发起任意网段扫描。
 
 ## 数据迁移
 
-从仅包含单一 `url` 的旧版本升级时，不需要修改 PostgreSQL 表结构，也不需要执行 SQL 迁移。配置仍保存在同一个 JSONB 文档中；应用读取旧服务时会将其视为内网地址，并补充空的 `externalUrl`。在页面中保存服务或导入导出配置后，新字段会随文档正常持久化。升级后的默认模式是内网，因此原有导航、图标和健康检查行为保持不变。
+从旧版本升级时，不需要修改 PostgreSQL 表结构，也不需要执行 SQL 迁移。配置仍保存在同一个 JSONB 文档中；应用读取旧服务时会补充 `scope: internal`、`runtime: infrastructure` 和空的 `externalUrl`。保守的 `infrastructure` 默认值可避免升级后把所有旧服务误当成 VM 或 Docker。部署完成后，在服务编辑页为实际的 iStoreOS、fnOS 等虚拟机选择“ESXi 虚拟机”，为 Synology 容器应用选择“Synology Docker”，并在系统设置中关联两个宿主服务。
 
 从旧版文件存储升级时，保留 `data/config.json` 并连接到空数据库。应用首次初始化表时会校验并导入该文件；表已有记录时不会覆盖数据库。确认导入成功后继续保留 JSON 备份，直到完成数据库备份验证。
 

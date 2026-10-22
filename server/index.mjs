@@ -16,6 +16,7 @@ import {
 import { MetricsCollector } from './metrics.mjs';
 import { createIkuaiTopologyProvider, IkuaiProviderError } from './ikuai.mjs';
 import { createServiceIconFetcher } from './service-icon.mjs';
+import { projectServiceTopology } from './service-topology.mjs';
 
 const SERVER_DIR = path.dirname(fileURLToPath(import.meta.url));
 const PROJECT_DIR = path.resolve(SERVER_DIR, '..');
@@ -377,13 +378,15 @@ export function createApp({
   app.get('/api/topology', asyncRoute(async (_request, response) => {
     const config = await configStore.get();
     const topology = config.topology || { nodes: [], links: [] };
+    const fallbackTopology = projectServiceTopology({
+      services: config.services || [],
+      topology,
+    });
     const manualSnapshot = {
       requestedSource: topology.source || 'manual',
       source: 'manual',
       status: topology.source === 'ikuai' ? 'fallback' : 'manual',
-      updatedAt: null,
-      nodes: topology.nodes || [],
-      links: topology.links || [],
+      ...fallbackTopology,
     };
     if (topology.source !== 'ikuai') {
       response.json(manualSnapshot);
@@ -392,11 +395,16 @@ export function createApp({
 
     try {
       const snapshot = await topologyProvider.load(topology.refreshInterval);
+      const projected = projectServiceTopology({
+        services: config.services || [],
+        topology,
+        snapshot,
+      });
       response.json({
+        ...projected,
         requestedSource: 'ikuai',
         source: 'ikuai',
         status: 'live',
-        ...snapshot,
       });
     } catch (error) {
       const code = error instanceof IkuaiProviderError ? error.code : 'IKUAI_UNAVAILABLE';
@@ -404,10 +412,10 @@ export function createApp({
       response.json({
         ...manualSnapshot,
         message: code === 'IKUAI_NOT_CONFIGURED'
-          ? 'iKuai API Token 尚未在部署环境中配置，当前显示手工拓扑。'
+          ? 'iKuai API Token 尚未在部署环境中配置，当前显示已登记服务拓扑。'
           : code === 'IKUAI_AUTH_FAILED'
-            ? 'iKuai Token 无效、已过期或权限不足，当前显示手工拓扑。'
-            : 'iKuai 数据暂时不可用，当前显示手工拓扑。',
+            ? 'iKuai Token 无效、已过期或权限不足，当前显示已登记服务拓扑。'
+            : 'iKuai 数据暂时不可用，当前显示已登记服务拓扑。',
       });
     }
   }));
@@ -461,7 +469,8 @@ export function createApp({
       configStore.get(),
       metricsCollector.collect(),
     ]);
-    const services = await Promise.all(config.services.map((service) => serviceChecker(service, {
+    const internalServices = config.services.filter((service) => service.scope !== 'external');
+    const services = await Promise.all(internalServices.map((service) => serviceChecker(service, {
       timeoutMs: serviceTimeoutMs,
     })));
 

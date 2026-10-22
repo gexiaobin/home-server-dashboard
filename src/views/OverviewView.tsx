@@ -3,8 +3,10 @@ import {
   AlertTriangle,
   ArrowRight,
   ArrowUpRight,
+  Bookmark,
   CheckCircle2,
   Cpu,
+  Globe2,
   HardDrive,
   Network,
   Server,
@@ -30,16 +32,21 @@ function healthByService(health: ServiceHealth[]) {
 
 export function OverviewView({ config, overview, connected, networkMode, onNavigate }: OverviewViewProps) {
   const isConnected = connected ?? Boolean(overview);
-  const serviceIds = new Set(config.services.map((service) => service.id));
+  const internalServices = config.services.filter((service) => service.scope === 'internal');
+  const externalBookmarks = config.services
+    .filter((service) => service.scope === 'external')
+    .sort((left, right) => Number(right.favorite) - Number(left.favorite));
+  const serviceIds = new Set(internalServices.map((service) => service.id));
   const currentHealth = overview?.services.filter((item) => serviceIds.has(item.id)) ?? [];
   const statusById = healthByService(currentHealth);
-  const launchServices = (config.services.some((service) => service.favorite)
-    ? config.services.filter((service) => service.favorite)
-    : config.services).slice(0, 6);
+  const launchServices = (internalServices.some((service) => service.favorite)
+    ? internalServices.filter((service) => service.favorite)
+    : internalServices).slice(0, 6);
   const upCount = currentHealth.filter((item) => item.status === 'up').length;
-  const downServices = config.services.filter((service) => statusById.get(service.id)?.status === 'down');
-  const uncheckedCount = config.services.filter((service) => service.check.type === 'none').length;
-  const pendingCount = config.services.filter((service) => !statusById.has(service.id)).length;
+  const downServices = internalServices.filter((service) => statusById.get(service.id)?.status === 'down');
+  const uncheckedCount = internalServices.filter((service) => service.check.type === 'none').length;
+  const pendingCount = internalServices.filter((service) => !statusById.has(service.id)).length;
+  const topologyNodeCount = 4 + internalServices.filter((service) => service.runtime !== 'infrastructure').length;
   const storage = overview?.disks.reduce(
     (total, disk) => ({ used: total.used + disk.used, total: total.total + disk.total }),
     { used: 0, total: 0 },
@@ -82,7 +89,7 @@ export function OverviewView({ config, overview, connected, networkMode, onNavig
           <strong>{!overview ? '正在等待系统遥测' : !isConnected ? '系统连接已中断' : downServices.length > 0 ? `${downServices.length} 项服务需要关注` : '核心系统运行正常'}</strong>
           <span>{isConnected ? 'REALTIME TELEMETRY' : overview ? 'STALE TELEMETRY' : 'TELEMETRY UNAVAILABLE'}</span>
         </div>
-        <div><b>{config.topology.nodes.length}</b><span>拓扑节点</span></div>
+        <div><b>{topologyNodeCount}</b><span>拓扑节点</span></div>
         <div><b>{upCount}</b><span>服务在线</span></div>
         <div><b>{uncheckedCount}</b><span>未配置探测</span></div>
       </section>
@@ -96,7 +103,7 @@ export function OverviewView({ config, overview, connected, networkMode, onNavig
           <div className="launch-signal">
             <i className="live-pulse" />
             <strong>{upCount}</strong>
-            <span>ONLINE<br /><small>{config.services.length} REGISTERED</small></span>
+            <span>ONLINE<br /><small>{internalServices.length} REGISTERED</small></span>
           </div>
         </div>
 
@@ -146,6 +153,53 @@ export function OverviewView({ config, overview, connected, networkMode, onNavig
           <button className="text-action" onClick={() => onNavigate('services')}>全部服务 <ArrowRight size={14} /></button>
         </div>
       </section>
+
+      {externalBookmarks.length > 0 && (
+        <section className="launch-surface bookmark-surface" aria-labelledby="bookmark-surface-title">
+          <div className="launch-heading">
+            <div>
+              <div className="eyebrow">EXTERNAL BOOKMARK DIRECTORY</div>
+              <h2 id="bookmark-surface-title">外网书签<span>云服务与互联网入口</span></h2>
+            </div>
+            <div className="launch-signal bookmark-signal">
+              <Bookmark size={17} />
+              <strong>{externalBookmarks.length}</strong>
+              <span>LINKS<br /><small>PUBLIC DIRECTORY</small></span>
+            </div>
+          </div>
+
+          <div className="launch-grid bookmark-grid">
+            {externalBookmarks.map((service) => {
+              const url = getServiceUrl(service, networkMode);
+              const host = getServiceHost(service, networkMode) || '地址不可用';
+              return (
+                <article className="launch-card is-bookmark" key={service.id}>
+                  <div className="launch-card-top">
+                    <ServiceAppIcon service={service} />
+                    <span className="bookmark-chip"><Globe2 size={12} /> 外网书签</span>
+                  </div>
+                  <div className="launch-card-copy">
+                    <h3>{service.name}</h3>
+                    <p>{service.description || service.category}</p>
+                  </div>
+                  <div className="launch-card-meta">
+                    <span>{service.category}</span>
+                    <code title={host}>{host}</code>
+                  </div>
+                  <a className="launch-open" href={url || '#'} target="_blank" rel="noreferrer" aria-label={`打开 ${service.name}`}>
+                    打开链接 <ArrowUpRight size={15} />
+                  </a>
+                </article>
+              );
+            })}
+          </div>
+
+          <div className="launch-footer">
+            <span><Bookmark size={12} /> 已收录 {externalBookmarks.length} 个外网书签</span>
+            <button className="text-action" onClick={() => onNavigate('services')}>管理书签 <ArrowRight size={14} /></button>
+          </div>
+        </section>
+      )}
 
       <div className="overview-situation">
         <section className="environment-panel">

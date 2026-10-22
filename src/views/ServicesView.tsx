@@ -1,4 +1,4 @@
-import { Clock3, ExternalLink, Pencil, Plus, Server, Star } from 'lucide-react';
+import { Bookmark, Clock3, ExternalLink, Globe2, Pencil, Plus, Server, Star } from 'lucide-react';
 import { useMemo, useState } from 'react';
 import { ServiceAppIcon } from '../components/ServiceAppIcon';
 import { statusLabel } from '../lib/format';
@@ -17,6 +17,12 @@ interface ServicesViewProps {
 
 type HealthFilter = 'all' | ServiceStatus;
 
+const runtimeLabels: Record<Service['runtime'], string> = {
+  infrastructure: '基础设施',
+  vm: 'ESXi 虚拟机',
+  docker: 'Synology Docker',
+};
+
 function formatCheckedAt(checkedAt?: string | null): string {
   if (!checkedAt) return '尚未检测';
 
@@ -32,7 +38,92 @@ function formatCheckedAt(checkedAt?: string | null): string {
   });
 }
 
-function ServiceCard({
+function CardControls({
+  service,
+  onEdit,
+  onToggleFavorite,
+}: {
+  service: Service;
+  onEdit: () => void;
+  onToggleFavorite: () => void;
+}) {
+  return (
+    <div className="service-card-controls">
+      <button
+        className={`icon-button subtle ${service.favorite ? 'is-favorite' : ''}`}
+        type="button"
+        aria-label={service.favorite ? `取消收藏 ${service.name}` : `收藏 ${service.name}`}
+        title={service.favorite ? '取消收藏' : '收藏'}
+        onClick={onToggleFavorite}
+      >
+        <Star size={15} fill={service.favorite ? 'currentColor' : 'none'} />
+      </button>
+      <button
+        className="icon-button subtle"
+        type="button"
+        aria-label={`编辑 ${service.name}`}
+        title={service.scope === 'external' ? '编辑书签' : '编辑服务'}
+        onClick={onEdit}
+      >
+        <Pencil size={15} />
+      </button>
+    </div>
+  );
+}
+
+function CardHeader({
+  service,
+  onEdit,
+  onToggleFavorite,
+}: {
+  service: Service;
+  onEdit: () => void;
+  onToggleFavorite: () => void;
+}) {
+  return (
+    <div className="service-card-head">
+      <div className="service-identity">
+        <ServiceAppIcon service={service} />
+        <div className="service-title-group">
+          <span className="service-category" title={service.category}>{service.category}</span>
+          <h3 title={service.name}>{service.name}</h3>
+        </div>
+      </div>
+      <CardControls service={service} onEdit={onEdit} onToggleFavorite={onToggleFavorite} />
+    </div>
+  );
+}
+
+function OpenLink({ service, url }: { service: Service; url: string | null }) {
+  if (url) {
+    return (
+      <a
+        className="open-service"
+        href={url}
+        target="_blank"
+        rel="noreferrer"
+        aria-label={`打开 ${service.name}`}
+        title={`打开 ${service.name}`}
+      >
+        <ExternalLink size={15} />
+      </a>
+    );
+  }
+
+  return (
+    <button
+      className="open-service is-disabled"
+      type="button"
+      disabled
+      aria-label={`${service.name} 未配置互联网地址`}
+      title="未配置互联网地址"
+    >
+      <ExternalLink size={15} />
+    </button>
+  );
+}
+
+function InternalServiceCard({
   service,
   status,
   networkMode,
@@ -51,36 +142,8 @@ function ServiceCard({
   const host = getServiceHost(service, networkMode) || '未配置互联网地址';
 
   return (
-    <article className="service-card service-pod">
-      <div className="service-card-head">
-        <div className="service-identity">
-          <ServiceAppIcon service={service} />
-          <div className="service-title-group">
-            <span className="service-category" title={service.category}>{service.category}</span>
-            <h3 title={service.name}>{service.name}</h3>
-          </div>
-        </div>
-        <div className="service-card-controls">
-          <button
-            className={`icon-button subtle ${service.favorite ? 'is-favorite' : ''}`}
-            type="button"
-            aria-label={service.favorite ? `取消收藏 ${service.name}` : `收藏 ${service.name}`}
-            title={service.favorite ? '取消收藏' : '收藏'}
-            onClick={onToggleFavorite}
-          >
-            <Star size={15} fill={service.favorite ? 'currentColor' : 'none'} />
-          </button>
-          <button
-            className="icon-button subtle"
-            type="button"
-            aria-label={`编辑 ${service.name}`}
-            title="编辑服务"
-            onClick={onEdit}
-          >
-            <Pencil size={15} />
-          </button>
-        </div>
-      </div>
+    <article className="service-card service-pod internal-service-card">
+      <CardHeader service={service} onEdit={onEdit} onToggleFavorite={onToggleFavorite} />
 
       <p className="service-description">{service.description || '暂无说明'}</p>
 
@@ -88,6 +151,10 @@ function ServiceCard({
         <div>
           <dt>{networkMode === 'internal' ? '内网地址' : '互联网地址'}</dt>
           <dd title={host}>{host}</dd>
+        </div>
+        <div>
+          <dt>运行环境</dt>
+          <dd>{runtimeLabels[service.runtime]}</dd>
         </div>
         <div>
           <dt><Clock3 size={12} />最近检测</dt>
@@ -101,28 +168,42 @@ function ServiceCard({
           <span>{statusLabel(currentStatus)}</span>
           {status?.latency != null && <span className="latency">{Math.round(status.latency)} ms</span>}
         </div>
-        {activeUrl ? (
-          <a
-            className="open-service"
-            href={activeUrl}
-            target="_blank"
-            rel="noreferrer"
-            aria-label={`打开 ${service.name}`}
-            title={`打开 ${service.name}`}
-          >
-            <ExternalLink size={15} />
-          </a>
-        ) : (
-          <button
-            className="open-service is-disabled"
-            type="button"
-            disabled
-            aria-label={`${service.name} 未配置互联网地址`}
-            title="未配置互联网地址"
-          >
-            <ExternalLink size={15} />
-          </button>
-        )}
+        <OpenLink service={service} url={activeUrl} />
+      </div>
+    </article>
+  );
+}
+
+function BookmarkCard({
+  service,
+  networkMode,
+  onEdit,
+  onToggleFavorite,
+}: {
+  service: Service;
+  networkMode: NetworkMode;
+  onEdit: () => void;
+  onToggleFavorite: () => void;
+}) {
+  const url = getServiceUrl(service, networkMode);
+  const host = getServiceHost(service, networkMode) || '地址不可用';
+
+  return (
+    <article className="service-card service-pod bookmark-card">
+      <CardHeader service={service} onEdit={onEdit} onToggleFavorite={onToggleFavorite} />
+
+      <p className="service-description">{service.description || '暂无说明'}</p>
+
+      <dl className="service-meta-list bookmark-meta-list">
+        <div>
+          <dt><Globe2 size={12} />互联网地址</dt>
+          <dd title={host}>{host}</dd>
+        </div>
+      </dl>
+
+      <div className="service-card-footer">
+        <span className="bookmark-scope-label"><Bookmark size={13} />外网书签</span>
+        <OpenLink service={service} url={url} />
       </div>
     </article>
   );
@@ -133,6 +214,8 @@ export function ServicesView({ services, health, search, networkMode, onAdd, onE
   const [healthFilter, setHealthFilter] = useState<HealthFilter>('all');
   const [favoritesOnly, setFavoritesOnly] = useState(false);
 
+  const internalServices = services.filter((service) => service.scope !== 'external');
+  const externalBookmarks = services.filter((service) => service.scope === 'external');
   const statusById = useMemo(() => new Map(health.map((item) => [item.id, item])), [health]);
   const categories = useMemo(
     () => [...new Set(services.map((service) => service.category))].sort((a, b) => a.localeCompare(b, 'zh-CN')),
@@ -143,8 +226,7 @@ export function ServicesView({ services, health, search, networkMode, onAdd, onE
     : 'all';
   const normalizedSearch = search.trim().toLocaleLowerCase('zh-CN');
 
-  const filteredServices = services.filter((service) => {
-    const serviceStatus = statusById.get(service.id)?.status || 'unknown';
+  function matchesCommonFilters(service: Service) {
     const matchesSearch = !normalizedSearch || [
       service.name,
       service.description,
@@ -156,11 +238,17 @@ export function ServicesView({ services, health, search, networkMode, onAdd, onE
 
     return matchesSearch
       && (activeCategory === 'all' || service.category === activeCategory)
-      && (healthFilter === 'all' || serviceStatus === healthFilter)
       && (!favoritesOnly || service.favorite);
-  });
+  }
 
-  const onlineCount = services.filter((service) => statusById.get(service.id)?.status === 'up').length;
+  const filteredInternalServices = internalServices.filter((service) => {
+    const serviceStatus = statusById.get(service.id)?.status || 'unknown';
+    return matchesCommonFilters(service)
+      && (healthFilter === 'all' || serviceStatus === healthFilter);
+  });
+  const filteredExternalBookmarks = externalBookmarks.filter(matchesCommonFilters);
+  const filteredCount = filteredInternalServices.length + filteredExternalBookmarks.length;
+  const onlineCount = internalServices.filter((service) => statusById.get(service.id)?.status === 'up').length;
   const hasLocalFilters = activeCategory !== 'all' || healthFilter !== 'all' || favoritesOnly;
 
   function resetFilters() {
@@ -175,10 +263,13 @@ export function ServicesView({ services, health, search, networkMode, onAdd, onE
         <div>
           <div className="eyebrow">SERVICE DIRECTORY / 服务目录</div>
           <h2>家庭服务控制台</h2>
-          <p>{services.length} 个服务 · {onlineCount} 个在线 · {services.filter((service) => service.favorite).length} 个收藏</p>
+          <p>
+            {internalServices.length} 个内网服务 · {onlineCount} 个在线 · {externalBookmarks.length} 个外网书签 ·{' '}
+            {services.filter((service) => service.favorite).length} 个收藏
+          </p>
         </div>
         <button className="button button-primary" type="button" onClick={onAdd}>
-          <Plus size={16} /> 添加服务
+          <Plus size={16} /> 添加入口
         </button>
       </div>
 
@@ -188,7 +279,7 @@ export function ServicesView({ services, health, search, networkMode, onAdd, onE
             <span className="panel-kicker">APPLICATION INDEX</span>
             <h2 id="service-directory-title">服务目录</h2>
           </div>
-          <span className="service-result-count">显示 {filteredServices.length} / {services.length}</span>
+          <span className="service-result-count">显示 {filteredCount} / {services.length}</span>
         </div>
 
         <div className="service-filter-bar">
@@ -219,9 +310,9 @@ export function ServicesView({ services, health, search, networkMode, onAdd, onE
 
           <div className="service-filter-controls">
             <label className="health-filter">
-              <span>健康状态</span>
+              <span>内网状态</span>
               <select
-                aria-label="按健康状态筛选"
+                aria-label="按内网服务健康状态筛选"
                 value={healthFilter}
                 onChange={(event) => setHealthFilter(event.target.value as HealthFilter)}
               >
@@ -244,37 +335,68 @@ export function ServicesView({ services, health, search, networkMode, onAdd, onE
           </div>
         </div>
 
-        {filteredServices.length > 0 ? (
-          <div className="service-grid service-directory-grid">
-            {filteredServices.map((service) => (
-              <ServiceCard
-                key={service.id}
-                service={service}
-                status={statusById.get(service.id)}
-                networkMode={networkMode}
-                onEdit={() => onEdit(service)}
-                onToggleFavorite={() => onToggleFavorite(service)}
-              />
-            ))}
-          </div>
-        ) : (
-          <div className="empty-state service-empty-state">
-            <div className="empty-icon"><Server size={24} /></div>
-            <h2>{services.length === 0 ? '还没有服务' : '没有符合条件的服务'}</h2>
-            <p>
-              {services.length === 0
-                ? '添加第一个家庭服务入口。'
-                : search.trim()
-                  ? '请调整顶部搜索词或当前筛选条件。'
-                  : '请调整分类、健康状态或收藏筛选。'}
-            </p>
-            {services.length === 0 ? (
-              <button className="button button-primary" type="button" onClick={onAdd}>
-                <Plus size={16} /> 添加服务
-              </button>
-            ) : hasLocalFilters ? (
-              <button className="button button-secondary" type="button" onClick={resetFilters}>重置筛选</button>
-            ) : null}
+        <div className="service-directory-groups">
+          <section className="service-catalog-section internal-service-directory" aria-labelledby="internal-service-directory-title">
+            <div className="service-directory-heading service-group-heading">
+              <div>
+                <span className="panel-kicker">LOCAL INFRASTRUCTURE</span>
+                <h2 id="internal-service-directory-title">内网服务</h2>
+              </div>
+              <span className="service-result-count">{filteredInternalServices.length} / {internalServices.length}</span>
+            </div>
+            {filteredInternalServices.length > 0 ? (
+              <div className="service-grid service-directory-grid">
+                {filteredInternalServices.map((service) => (
+                  <InternalServiceCard
+                    key={service.id}
+                    service={service}
+                    status={statusById.get(service.id)}
+                    networkMode={networkMode}
+                    onEdit={() => onEdit(service)}
+                    onToggleFavorite={() => onToggleFavorite(service)}
+                  />
+                ))}
+              </div>
+            ) : (
+              <div className="service-group-empty">
+                <Server size={20} />
+                <span>{internalServices.length === 0 ? '还没有内网服务' : '没有符合条件的内网服务'}</span>
+              </div>
+            )}
+          </section>
+
+          <section className="service-catalog-section external-bookmark-directory" aria-labelledby="external-bookmark-directory-title">
+            <div className="service-directory-heading service-group-heading">
+              <div>
+                <span className="panel-kicker">EXTERNAL BOOKMARKS</span>
+                <h2 id="external-bookmark-directory-title">外网书签</h2>
+              </div>
+              <span className="service-result-count">{filteredExternalBookmarks.length} / {externalBookmarks.length}</span>
+            </div>
+            {filteredExternalBookmarks.length > 0 ? (
+              <div className="service-grid service-directory-grid bookmark-directory-grid">
+                {filteredExternalBookmarks.map((service) => (
+                  <BookmarkCard
+                    key={service.id}
+                    service={service}
+                    networkMode={networkMode}
+                    onEdit={() => onEdit(service)}
+                    onToggleFavorite={() => onToggleFavorite(service)}
+                  />
+                ))}
+              </div>
+            ) : (
+              <div className="service-group-empty bookmark-group-empty">
+                <Bookmark size={20} />
+                <span>{externalBookmarks.length === 0 ? '还没有外网书签' : '没有符合条件的外网书签'}</span>
+              </div>
+            )}
+          </section>
+        </div>
+
+        {filteredCount === 0 && services.length > 0 && hasLocalFilters && (
+          <div className="service-filter-empty-action">
+            <button className="button button-secondary" type="button" onClick={resetFilters}>重置筛选</button>
           </div>
         )}
       </section>

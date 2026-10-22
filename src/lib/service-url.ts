@@ -1,9 +1,13 @@
 import type { NetworkMode, Service } from '../types';
 
-type ServiceUrls = Pick<Service, 'url' | 'externalUrl'>;
+type ServiceUrls = Pick<Service, 'url' | 'externalUrl'> & Partial<Pick<Service, 'scope'>>;
 
 export function getServiceUrl(service: ServiceUrls, networkMode: NetworkMode): string | null {
-  const value = networkMode === 'external' ? service.externalUrl : service.url;
+  const value = service.scope === 'external'
+    ? service.url
+    : networkMode === 'external'
+      ? service.externalUrl
+      : service.url;
   return value?.trim() || null;
 }
 

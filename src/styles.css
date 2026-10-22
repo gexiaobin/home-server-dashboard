@@ -1005,6 +1005,46 @@ a {
   border-radius: 4px;
 }
 
+.bookmark-surface {
+  margin-top: 16px;
+}
+
+.launch-grid.bookmark-grid {
+  grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+}
+
+.bookmark-signal > svg {
+  color: var(--cyan);
+}
+
+.bookmark-signal strong {
+  color: var(--cyan);
+}
+
+.bookmark-chip {
+  min-height: 24px;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 0 8px;
+  color: var(--cyan);
+  background: var(--cyan-dim);
+  border: 1px solid #24545a;
+  border-radius: 3px;
+  font-family: var(--mono);
+  font-size: 10px;
+}
+
+.launch-card.is-bookmark::before {
+  background: var(--cyan);
+}
+
+.bookmark-surface .launch-footer > span {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+}
+
 .launch-heading {
   min-height: 82px;
   display: flex;
@@ -1769,6 +1809,59 @@ a {
   gap: 7px;
 }
 
+.service-directory-groups {
+  display: flex;
+  flex-direction: column;
+  gap: 30px;
+}
+
+.service-catalog-section {
+  min-width: 0;
+}
+
+.service-catalog-section + .service-catalog-section {
+  padding-top: 28px;
+  border-top: 1px solid var(--border-strong);
+}
+
+.service-group-heading {
+  min-height: 44px;
+  margin-bottom: 10px;
+}
+
+.service-group-heading h2 {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+}
+
+.service-group-empty {
+  min-height: 112px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  color: var(--text-muted);
+  background: #0d1013;
+  border-top: 1px solid var(--border);
+  border-bottom: 1px solid var(--border);
+  font-size: 10px;
+}
+
+.service-group-empty svg {
+  color: var(--accent);
+}
+
+.bookmark-group-empty svg {
+  color: var(--cyan);
+}
+
+.service-filter-empty-action {
+  display: flex;
+  justify-content: center;
+  padding-top: 18px;
+}
+
 .health-filter {
   height: 32px;
   display: flex;
@@ -1851,6 +1944,37 @@ a {
   border: 1px solid var(--border);
   border-radius: 4px;
   transition: background 130ms ease, border-color 130ms ease, transform 130ms ease;
+}
+
+.internal-service-card {
+  min-height: 280px;
+}
+
+.bookmark-card {
+  min-height: 214px;
+}
+
+.bookmark-card.service-pod::before {
+  background: var(--cyan);
+}
+
+.bookmark-card .service-icon {
+  color: var(--cyan);
+  background: var(--cyan-dim);
+  border-color: #24525a;
+}
+
+.bookmark-meta-list {
+  margin-top: 4px;
+}
+
+.bookmark-scope-label {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--cyan);
+  font-family: var(--mono);
+  font-size: 10px;
 }
 
 .service-card:hover {
@@ -2961,6 +3085,196 @@ a {
   line-height: 1.45;
 }
 
+.managed-topology {
+  position: relative;
+  width: 100%;
+  min-width: 760px;
+  min-height: 100%;
+  padding: 30px 34px 46px;
+}
+
+.topology-root-stack {
+  display: flex;
+  align-items: center;
+  flex-direction: column;
+}
+
+.topology-tree-node {
+  position: relative;
+  top: auto;
+  left: auto;
+  z-index: 2;
+  width: 168px;
+  min-height: 58px;
+  flex: 0 0 auto;
+  transform: none;
+}
+
+.topology-tree-node:hover,
+.topology-tree-node.is-selected {
+  transform: translateY(-1px);
+}
+
+.topology-tree-node > .service-app-icon {
+  width: 34px;
+  height: 34px;
+  flex: 0 0 34px;
+}
+
+.topology-tree-node > .service-app-icon .service-app-icon-image {
+  top: 3px;
+  left: 3px;
+  width: 26px;
+  height: 26px;
+}
+
+.topology-trunk {
+  position: relative;
+  width: 1px;
+  height: 38px;
+  display: block;
+  background: #52616a;
+}
+
+.topology-trunk small {
+  position: absolute;
+  top: 12px;
+  left: 9px;
+  color: var(--text-muted);
+  font-family: var(--mono);
+  font-size: 9px;
+}
+
+.topology-fork {
+  position: relative;
+  width: 50%;
+  height: 32px;
+  margin: 0 auto;
+}
+
+.topology-fork::before {
+  content: "";
+  position: absolute;
+  top: 0;
+  left: 50%;
+  width: 1px;
+  height: 17px;
+  background: #52616a;
+}
+
+.topology-fork::after {
+  content: "";
+  position: absolute;
+  top: 16px;
+  right: 0;
+  left: 0;
+  height: 1px;
+  background: #52616a;
+}
+
+.topology-branches {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.topology-branch {
+  position: relative;
+  min-width: 0;
+  padding: 16px 28px 32px;
+}
+
+.topology-branch + .topology-branch {
+  border-left: 1px solid #262d32;
+}
+
+.topology-branch::before {
+  content: "";
+  position: absolute;
+  top: -16px;
+  left: 50%;
+  width: 1px;
+  height: 63px;
+  background: #52616a;
+}
+
+.topology-branch-heading {
+  position: relative;
+  z-index: 1;
+  min-height: 36px;
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.topology-branch-heading strong {
+  color: var(--text-secondary);
+  font-size: 10px;
+  font-weight: 600;
+}
+
+.topology-branch-heading b {
+  min-width: 20px;
+  display: inline-grid;
+  place-items: center;
+  margin-left: 5px;
+  padding: 2px 4px;
+  color: var(--accent);
+  background: var(--accent-dim);
+  border: 1px solid #46541e;
+  border-radius: 3px;
+  font-family: var(--mono);
+  font-weight: 650;
+}
+
+.topology-branch > .topology-tree-node {
+  margin: 0 auto;
+}
+
+.topology-branch-line {
+  width: 1px;
+  height: 36px;
+  display: block;
+  margin: 0 auto;
+  background: #52616a;
+}
+
+.topology-leaf-grid {
+  position: relative;
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(152px, 1fr));
+  gap: 20px 12px;
+  padding-top: 22px;
+  border-top: 1px solid #46525a;
+}
+
+.topology-leaf-grid > .topology-tree-node {
+  width: 100%;
+}
+
+.topology-leaf-grid > .topology-tree-node::before {
+  content: "";
+  position: absolute;
+  bottom: 100%;
+  left: 50%;
+  width: 1px;
+  height: 23px;
+  background: #46525a;
+}
+
+.topology-branch-empty {
+  min-height: 60px;
+  display: grid;
+  place-items: center;
+  color: var(--text-muted);
+  border-top: 1px solid #46525a;
+  font-size: 10px;
+}
+
+.topology-refresh {
+  flex: 0 0 30px;
+}
+
 /* Settings and forms */
 
 .settings-view {
@@ -3232,6 +3546,16 @@ a {
   padding: 15px;
   border: 1px solid var(--border);
   border-radius: 4px;
+}
+
+.service-scope-fieldset {
+  margin-top: 0;
+  margin-bottom: 18px;
+}
+
+.service-scope-control {
+  grid-template-columns: repeat(2, 1fr);
+  margin-bottom: 0;
 }
 
 .check-fieldset legend {
@@ -3743,6 +4067,11 @@ a {
     display: none;
   }
 
+  .managed-topology {
+    padding-right: 22px;
+    padding-left: 22px;
+  }
+
   .node-inspector {
     position: static;
     z-index: auto;
@@ -3980,6 +4309,39 @@ a {
     transform-origin: top left;
   }
 
+  .managed-topology {
+    min-width: 0;
+    padding: 24px 14px 38px;
+  }
+
+  .topology-fork {
+    display: none;
+  }
+
+  .topology-branches {
+    grid-template-columns: 1fr;
+    gap: 28px;
+    margin-top: 28px;
+  }
+
+  .topology-branch {
+    padding: 18px 8px 24px;
+    border-top: 1px solid #2d353a;
+  }
+
+  .topology-branch + .topology-branch {
+    border-left: 0;
+  }
+
+  .topology-branch::before {
+    top: -29px;
+    height: 74px;
+  }
+
+  .topology-leaf-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
   .topology-workspace.has-inspector {
     flex-direction: column;
   }
@@ -4136,6 +4498,10 @@ a {
 
   .topology-summary {
     display: none;
+  }
+
+  .topology-leaf-grid {
+    grid-template-columns: 1fr;
   }
 
   .overview-heading h2 {

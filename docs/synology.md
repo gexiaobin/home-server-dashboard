@@ -55,7 +55,7 @@ BASIC_AUTH_PASSWORD=
 
 生产环境建议将镜像改成明确版本，例如 `:1.0.0`，避免 `latest` 自动变化。不要把实际数据库 URI 或 iKuai Token 写入 Compose、`.env`、README 或截图；数据库应使用专用账号，不要长期使用 `postgres` 超级用户。
 
-服务目录会从每个服务的内网 `url` 发现页面声明的真实 favicon，并支持页面明确引用的公网 HTTPS CDN 图标。图标始终由容器代理获取；切换到外网模式不会让容器改为从 `externalUrl` 发现图标。跨域图标只允许 HTTPS 默认端口，DNS 结果必须是公网地址，且第三方图标主机会看到 NAS 的出口 IP，因此只应配置可信的服务页面。全局 `SERVICE_ICON_ALLOW_INSECURE_TLS` 应保持默认的 `false`；可信内网设备使用自签名或过期 HTTPS 证书时，在服务编辑窗口只为该服务打开“允许自签名 HTTPS 图标”。跨域 HTTPS 图标始终校验证书。
+服务目录会从每个条目的 `url` 发现页面声明的真实 favicon，并支持页面明确引用的公网 HTTPS CDN 图标。内网服务的 `url` 是内网地址，外网书签的 `url` 是公开地址；图标始终由容器代理获取，切换网络模式不会改用 `externalUrl`。跨域图标只允许 HTTPS 默认端口，DNS 结果必须是公网地址，且第三方图标主机会看到 NAS 的出口 IP，因此只应配置可信页面。全局 `SERVICE_ICON_ALLOW_INSECURE_TLS` 应保持默认的 `false`；可信内网设备使用自签名或过期 HTTPS 证书时，在服务编辑窗口只为该服务打开“允许自签名 HTTPS 图标”。跨域 HTTPS 图标始终校验证书。
 
 ## 3. 目录权限
 
@@ -99,9 +99,9 @@ Destination: http://127.0.0.1:3000
 
 应用也支持可选 Basic Auth：在 `.env` 中同时设置 `BASIC_AUTH_USERNAME` 与 `BASIC_AUTH_PASSWORD` 后重建容器。凭据只有在 HTTPS 下传输才安全，不能用它替代公网场景的成熟身份代理。`/api/health` 不要求登录，以供容器健康检查使用。
 
-每个服务可以同时配置内网 `url` 和可选的互联网 `externalUrl`。顶栏的“内网 / 外网”开关只改变浏览器打开的链接，不会替代 DSM 反向代理、DNS、证书、端口转发或身份认证。外网地址为空时，对应入口会保持禁用，不会回退到内网地址。互联网地址建议使用 HTTPS，且不要在 URL 中嵌入密码或 Token。
+内网服务可以同时配置内网 `url` 和可选的互联网 `externalUrl`。顶栏的“内网 / 外网”开关只改变内网服务打开的链接，不会替代 DSM 反向代理、DNS、证书、端口转发或身份认证。外网地址为空时，对应入口会保持禁用，不会回退到内网地址。外网书签使用一个公开 `url`，始终打开该地址，并在服务中心与首页单独显示。互联网地址建议使用 HTTPS，且不要在 URL 中嵌入密码或 Token。
 
-切换模式按浏览器和站点来源保存在 `localStorage`，不会写入 PostgreSQL。通过内网 IP 和公网域名访问控制台属于两个不同来源，因此可以各自保留模式。服务图标和未显式设置 `check.url` 的 HTTP 健康检查始终从容器访问内网 `url`，所以还需确保容器能够解析内网 DNS 并访问目标端口。
+切换模式按浏览器和站点来源保存在 `localStorage`，不会写入 PostgreSQL。通过内网 IP 和公网域名访问控制台属于两个不同来源，因此可以各自保留模式。服务图标始终从容器访问条目自身的 `url`：内网服务使用内网地址，外网书签使用公开地址；未显式设置 `check.url` 的 HTTP 健康检查只针对内网服务，并固定使用其内网 `url`。因此还需确保容器能够解析并访问相应目标。
 
 ## 6. 宿主指标挂载
 
@@ -145,9 +145,9 @@ docker compose \
   up -d
 ```
 
-多存储空间或 Docker Socket 覆盖文件可以继续追加为其他 `-f` 参数。启动后进入“系统设置 > 拓扑数据源”，选择“iKuai v4 API”、设置刷新间隔并保存。Token 和路由器地址只存在于服务端部署环境，不进入 PostgreSQL 配置或 JSON 导出。
+多存储空间或 Docker Socket 覆盖文件可以继续追加为其他 `-f` 参数。启动后先在服务中心把 iStoreOS、fnOS 等条目标记为“ESXi 虚拟机”，把 NAS 中的容器入口标记为“Synology Docker”。再进入“系统设置 > 拓扑数据源”，选择“iKuai v4 API”、设置刷新间隔，并分别选择 VMware ESXi 与 Synology 宿主服务。Token 和路由器地址只存在于服务端部署环境，不进入 PostgreSQL 配置或 JSON 导出。
 
-应用只向四类固定监控端点发送带 Bearer Token 的 `GET` 请求，不跟随重定向，并限制超时和响应大小。路由器未配置、Token 无效或 API 暂时不可用时，拓扑页会显示原因并回退到已保存的手工节点与链路；概览、服务目录和系统监控仍可正常使用。
+应用只向四类固定监控端点发送带 Bearer Token 的 `GET` 请求，不跟随重定向，并限制超时和响应大小。iKuai 返回的终端不会直接显示；服务端只保留 Internet、路由器、所选宿主及明确分类的内网 VM/Docker 服务。路由器未配置、Token 无效或 API 暂时不可用时，拓扑页仍使用服务中心数据生成同一双分支结构；概览、服务目录和系统监控仍可正常使用。
 
 ## 8. Docker Socket：默认禁用
 
@@ -177,7 +177,7 @@ docker compose -f docker-compose.yml -f docker-compose.database-file.yml ps
 
 在 Container Manager 中，也可以进入 Project 后重新拉取镜像并重建。升级时应沿用当前启用的所有覆盖文件；启用了 iKuai 动态拓扑时，需要继续加入 `-f docker-compose.ikuai.yml`。升级前记录当前镜像标签；发生问题时，将 `DASHBOARD_IMAGE` 改回旧版本标签后再次部署。
 
-从单一服务地址版本升级时无需修改 Compose、环境变量或 PostgreSQL 表结构。旧配置中的 `url` 会继续作为内网地址使用，应用会兼容缺少 `externalUrl` 的 JSONB 文档。升级后的默认模式是内网；部署完成后可在服务编辑页逐项填写互联网地址。
+从旧版本升级时无需修改 Compose、环境变量或 PostgreSQL 表结构。旧配置中的 `url` 会继续作为内网地址使用，应用会补充空的 `externalUrl`，并把旧条目保守归为“内网基础设施”。升级后在服务编辑页逐项填写互联网地址与运行环境；外网云服务应改为“外网书签”。
 
 ## 10. 备份与恢复
 
@@ -218,9 +218,10 @@ docker compose -f docker-compose.yml -f docker-compose.database-file.yml ps
 - 确认容器 DNS 能解析目标主机名，并能访问目标 VLAN 和端口。
 - 自签名 HTTPS、ACL、防火墙或目标服务拒绝请求都可能导致检查失败。
 
-### iKuai 拓扑回退到手工数据
+### iKuai 拓扑显示回退状态
 
 - 确认页面“系统设置”已选择“iKuai v4 API”并保存。
+- 确认已经选择 VMware ESXi 与 Synology 宿主服务，并给需要显示的内网条目设置正确运行环境。
 - 确认部署时加入 `docker-compose.ikuai.yml`，且 `.env` 中 `IKUAI_BASE_URL` 只包含路由器 origin。
 - 确认 `secrets/ikuai_token` 是容器用户可读的普通文件，内容只有一行有效 Token；不要同时设置 `IKUAI_TOKEN` 与 `IKUAI_TOKEN_FILE`。
 - 确认路由器固件支持 v4 监控 API，Token 具有相应读取权限，容器网络可以访问路由器。
@@ -234,7 +235,7 @@ docker compose -f docker-compose.yml -f docker-compose.database-file.yml ps
 
 ### 服务图标没有显示
 
-- 图标由容器根据服务配置中的内网 `url` 发现并代理获取，先确认容器能解析并访问服务地址以及页面明确声明的公网 HTTPS 图标主机。
+- 图标由容器根据条目自身的 `url` 发现并代理获取；内网服务使用内网地址，外网书签使用公开地址。先确认容器能解析并访问该地址以及页面明确声明的公网 HTTPS 图标主机。
 - 默认抓取超时为 5000 毫秒，可通过 `SERVICE_ICON_TIMEOUT_MS` 调整。
 - 可信内网服务使用自签名、过期或与 IP 地址不匹配的证书时，在服务编辑窗口打开“允许自签名 HTTPS 图标”。该设置只作用于当前服务，不会关闭跨域 HTTPS 图标的证书校验。
 - `SERVICE_ICON_ALLOW_INSECURE_TLS=true` 会全局覆盖所有服务，仅保留用于兼容旧部署，不建议作为常规修复。

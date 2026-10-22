@@ -1,5 +1,7 @@
 export type ServiceStatus = 'up' | 'down' | 'unknown' | 'checking';
 export type NetworkMode = 'internal' | 'external';
+export type ServiceScope = 'internal' | 'external';
+export type ServiceRuntime = 'infrastructure' | 'vm' | 'docker';
 
 export interface ServiceCheck {
   type: 'http' | 'tcp' | 'none';
@@ -14,6 +16,8 @@ export interface Service {
   description: string;
   url: string;
   externalUrl: string;
+  scope: ServiceScope;
+  runtime: ServiceRuntime;
   category: string;
   icon: string;
   iconAllowInsecureTls: boolean;
@@ -64,6 +68,8 @@ export interface AppConfig {
   topology: {
     source: 'manual' | 'ikuai';
     refreshInterval: number;
+    vmHostServiceId: string;
+    dockerHostServiceId: string;
     nodes: TopologyNode[];
     links: TopologyLink[];
   };

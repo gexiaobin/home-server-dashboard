@@ -3,13 +3,35 @@
 import { cleanup, render, screen, within } from '@testing-library/react';
 import '@testing-library/jest-dom/vitest';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import type { AppConfig, Overview } from '../types';
+import type { AppConfig, Overview, Service } from '../types';
 import { OverviewView } from './OverviewView';
 
 const config: AppConfig = {
   settings: { title: 'HomeLab', location: 'Home', hostDisplayName: '', refreshInterval: 5000 },
   services: [],
-  topology: { source: 'manual', refreshInterval: 15_000, nodes: [], links: [] },
+  topology: {
+    source: 'manual',
+    refreshInterval: 15_000,
+    vmHostServiceId: '',
+    dockerHostServiceId: '',
+    nodes: [],
+    links: [],
+  },
+};
+
+const externalBookmark: Service = {
+  id: 'aliyun',
+  name: 'Alibaba Cloud',
+  description: 'Cloud console',
+  url: 'https://home.console.aliyun.com/',
+  externalUrl: '',
+  scope: 'external',
+  runtime: 'infrastructure',
+  category: '云服务',
+  icon: 'default',
+  iconAllowInsecureTls: false,
+  favorite: false,
+  check: { type: 'none' },
 };
 
 const overview: Overview = {
@@ -107,5 +129,21 @@ describe('OverviewView CPU telemetry', () => {
     expect(screen.getByText('SYSTEM OFFLINE')).toBeInTheDocument();
     expect(screen.getByText('STALE TELEMETRY')).toBeInTheDocument();
     expect(screen.getByText('HOST DATA STALE')).toBeInTheDocument();
+  });
+
+  it('renders external bookmarks in their own homepage directory', () => {
+    render(
+      <OverviewView
+        config={{ ...config, services: [externalBookmark] }}
+        overview={overview}
+        networkMode="internal"
+        onNavigate={vi.fn()}
+      />,
+    );
+
+    expect(screen.getByRole('heading', { name: /外网书签/ })).toBeInTheDocument();
+    expect(screen.getByRole('link', { name: '打开 Alibaba Cloud' }))
+      .toHaveAttribute('href', externalBookmark.url);
+    expect(screen.getByText('0 REGISTERED')).toBeInTheDocument();
   });
 });

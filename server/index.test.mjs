@@ -316,14 +316,57 @@ describe('createApp', () => {
     expect(dependencies.configStore.put).not.toHaveBeenCalled();
   });
 
-  it('returns the persisted manual topology without invoking iKuai', async () => {
+  it('projects the service directory in manual mode without leaking legacy nodes or external bookmarks', async () => {
+    const services = [
+      {
+        id: 'esxi',
+        name: 'VMware ESXi',
+        url: 'https://192.0.2.10',
+        scope: 'internal',
+        runtime: 'infrastructure',
+      },
+      {
+        id: 'istoreos',
+        name: 'iStoreOS',
+        url: 'http://192.0.2.2',
+        scope: 'internal',
+        runtime: 'vm',
+      },
+      {
+        id: 'qinglong',
+        name: 'Qinglong',
+        url: 'http://192.0.2.8:8903',
+        scope: 'internal',
+        runtime: 'docker',
+      },
+      {
+        id: 'external-vm',
+        name: 'Cloud console',
+        url: 'https://example.com',
+        scope: 'external',
+        runtime: 'vm',
+      },
+    ];
     const dependencies = createDependencies({
       configStore: {
         get: vi.fn(async () => ({
           ...configFixture,
+          services,
           topology: {
             ...configFixture.topology,
-            nodes: [{ id: 'router', label: 'Router', type: 'router', x: 50, y: 50 }],
+            vmHostServiceId: 'esxi',
+            nodes: [
+              { id: 'legacy-router', label: 'Legacy Router', type: 'router', status: 'up', x: 50, y: 50 },
+              {
+                id: 'legacy-external-vm',
+                label: 'Cloud console',
+                type: 'vm',
+                serviceId: 'external-vm',
+                x: 50,
+                y: 80,
+              },
+            ],
+            links: [{ source: 'legacy-router', target: 'legacy-external-vm' }],
           },
         })),
         put: vi.fn(),
@@ -334,12 +377,28 @@ describe('createApp', () => {
     const response = await fetch(`${baseUrl}/api/topology`);
 
     expect(response.status).toBe(200);
-    await expect(readJson(response)).resolves.toMatchObject({
+    const topology = await readJson(response);
+    expect(topology).toMatchObject({
       requestedSource: 'manual',
       source: 'manual',
       status: 'manual',
-      nodes: [{ id: 'router' }],
     });
+    expect(topology.nodes.map((node) => node.id)).toEqual([
+      'service-topology-internet',
+      'service-topology-router',
+      'service-topology-vm-host',
+      'service-topology-service-istoreos',
+      'service-topology-docker-host',
+      'service-topology-service-qinglong',
+    ]);
+    expect(topology.nodes.find((node) => node.type === 'router')).toMatchObject({
+      label: 'iKuai',
+      status: 'unknown',
+    });
+    expect(topology.nodes).not.toEqual(expect.arrayContaining([
+      expect.objectContaining({ serviceId: 'external-vm' }),
+      expect.objectContaining({ id: 'legacy-router' }),
+    ]));
     expect(dependencies.topologyProvider.load).not.toHaveBeenCalled();
   });
 
@@ -347,7 +406,18 @@ describe('createApp', () => {
     const ikuaiConfigStore = {
       get: vi.fn(async () => ({
         ...configFixture,
-        topology: { ...configFixture.topology, source: 'ikuai', refreshInterval: 30_000 },
+        topology: {
+          ...configFixture.topology,
+          source: 'ikuai',
+          refreshInterval: 30_000,
+          nodes: [{
+            id: 'legacy-router',
+            label: 'Stale Router',
+            type: 'router',
+            status: 'up',
+            ipAddress: '192.0.2.99',
+          }],
+        },
       })),
       put: vi.fn(),
     };
@@ -356,7 +426,7 @@ describe('createApp', () => {
       topologyProvider: {
         load: vi.fn(async () => ({
           updatedAt: '2026-10-21T12:00:00.000Z',
-          nodes: [{ id: 'ikuai-router', label: 'iKuai', type: 'router', x: 50, y: 30 }],
+          nodes: [{ id: 'ikuai-router', label: 'iKuai', type: 'router', status: 'up', x: 50, y: 30 }],
           links: [],
           stats: { onlineClients: 1 },
         })),
@@ -364,13 +434,21 @@ describe('createApp', () => {
     });
     const liveUrl = await serve(createApp(liveDependencies));
     const liveResponse = await fetch(`${liveUrl}/api/topology`);
+    const liveTopology = await readJson(liveResponse);
 
-    await expect(readJson(liveResponse)).resolves.toMatchObject({
+    expect(liveTopology).toMatchObject({
       requestedSource: 'ikuai',
       source: 'ikuai',
       status: 'live',
-      nodes: [{ id: 'ikuai-router' }],
+      stats: { onlineClients: 1 },
     });
+    expect(liveTopology.nodes.map((node) => node.id)).toEqual([
+      'service-topology-internet',
+      'ikuai-router',
+      'service-topology-vm-host',
+      'service-topology-docker-host',
+    ]);
+    expect(liveTopology.nodes.find((node) => node.type === 'router')).toMatchObject({ status: 'up' });
     expect(liveDependencies.topologyProvider.load).toHaveBeenCalledWith(30_000);
 
     const fallbackDependencies = createDependencies({
@@ -385,12 +463,22 @@ describe('createApp', () => {
     const fallbackResponse = await fetch(`${fallbackUrl}/api/topology`);
 
     expect(fallbackResponse.status).toBe(200);
-    await expect(readJson(fallbackResponse)).resolves.toMatchObject({
+    const fallbackTopology = await readJson(fallbackResponse);
+    expect(fallbackTopology).toMatchObject({
       requestedSource: 'ikuai',
       source: 'manual',
       status: 'fallback',
       message: expect.stringContaining('API Token'),
     });
+    expect(fallbackTopology.nodes.map((node) => node.id)).toEqual([
+      'service-topology-internet',
+      'service-topology-router',
+      'service-topology-vm-host',
+      'service-topology-docker-host',
+    ]);
+    const fallbackRouter = fallbackTopology.nodes.find((node) => node.type === 'router');
+    expect(fallbackRouter).toMatchObject({ label: 'iKuai', status: 'unknown' });
+    expect(fallbackRouter).not.toHaveProperty('ipAddress');
 
     const authFallbackDependencies = createDependencies({
       configStore: ikuaiConfigStore,
@@ -504,6 +592,41 @@ describe('createApp', () => {
       { timeoutMs: 321 },
     );
     expect(dependencies.dockerClient).toHaveBeenCalledWith('/fixture/docker.sock', { timeoutMs: 654 });
+  });
+
+  it('excludes external bookmarks from overview health checks', async () => {
+    const internalService = { ...configFixture.services[0], scope: 'internal' };
+    const externalBookmark = {
+      id: 'aliyun',
+      name: 'Alibaba Cloud',
+      url: 'https://home.console.aliyun.com',
+      scope: 'external',
+      runtime: 'infrastructure',
+      check: { type: 'none' },
+    };
+    const dependencies = createDependencies({
+      configStore: {
+        get: vi.fn(async () => ({
+          ...configFixture,
+          services: [internalService, externalBookmark],
+        })),
+        put: vi.fn(),
+      },
+    });
+    const baseUrl = await serve(createApp(dependencies));
+
+    const response = await fetch(`${baseUrl}/api/overview`);
+    const overview = await readJson(response);
+
+    expect(response.status).toBe(200);
+    expect(overview.services).toEqual([
+      expect.objectContaining({ id: internalService.id, status: 'up' }),
+    ]);
+    expect(dependencies.serviceChecker).toHaveBeenCalledTimes(1);
+    expect(dependencies.serviceChecker).toHaveBeenCalledWith(
+      internalService,
+      { timeoutMs: 321 },
+    );
   });
 
   it('uses the persisted host display name and keeps the detected hostname available', async () => {

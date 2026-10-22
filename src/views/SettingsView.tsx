@@ -14,6 +14,8 @@ export function SettingsView({ config, detectedHostname, saving, onSave }: Setti
   const [topologyDraft, setTopologyDraft] = useState({
     source: config.topology.source,
     refreshInterval: config.topology.refreshInterval,
+    vmHostServiceId: config.topology.vmHostServiceId,
+    dockerHostServiceId: config.topology.dockerHostServiceId,
   });
   const [importError, setImportError] = useState('');
   const fileRef = useRef<HTMLInputElement>(null);
@@ -23,8 +25,16 @@ export function SettingsView({ config, detectedHostname, saving, onSave }: Setti
     setTopologyDraft({
       source: config.topology.source,
       refreshInterval: config.topology.refreshInterval,
+      vmHostServiceId: config.topology.vmHostServiceId,
+      dockerHostServiceId: config.topology.dockerHostServiceId,
     });
-  }, [config.settings, config.topology.source, config.topology.refreshInterval]);
+  }, [
+    config.settings,
+    config.topology.source,
+    config.topology.refreshInterval,
+    config.topology.vmHostServiceId,
+    config.topology.dockerHostServiceId,
+  ]);
 
   async function saveGeneral(event: React.FormEvent) {
     event.preventDefault();
@@ -69,6 +79,8 @@ export function SettingsView({ config, detectedHostname, saving, onSave }: Setti
       setTopologyDraft({
         source: parsed.topology.source || 'manual',
         refreshInterval: parsed.topology.refreshInterval || 15_000,
+        vmHostServiceId: parsed.topology.vmHostServiceId || '',
+        dockerHostServiceId: parsed.topology.dockerHostServiceId || '',
       });
       setImportError('');
     } catch (error) {
@@ -77,6 +89,10 @@ export function SettingsView({ config, detectedHostname, saving, onSave }: Setti
       event.target.value = '';
     }
   }
+
+  const hostServices = config.services.filter((service) => (
+    service.scope === 'internal' && service.runtime === 'infrastructure'
+  ));
 
   return (
     <div className="settings-view">
@@ -123,7 +139,7 @@ export function SettingsView({ config, detectedHostname, saving, onSave }: Setti
         <div className="settings-section-copy">
           <span className="panel-kicker">NETWORK MAP</span>
           <h2>拓扑数据源</h2>
-          <p>选择手工拓扑，或从 iKuai v4 只读 API 获取在线终端与上联关系。</p>
+          <p>配置 iKuai 实时数据源，以及 VMware 与 Synology 两个基础设施宿主。</p>
         </div>
         <form className="settings-form" onSubmit={saveTopology}>
           <label className="field">
@@ -136,7 +152,7 @@ export function SettingsView({ config, detectedHostname, saving, onSave }: Setti
                 source: event.target.value as AppConfig['topology']['source'],
               })}
             >
-              <option value="manual">手工配置</option>
+              <option value="manual">服务目录（无 iKuai）</option>
               <option value="ikuai">iKuai v4 API</option>
             </select>
           </label>
@@ -157,13 +173,63 @@ export function SettingsView({ config, detectedHostname, saving, onSave }: Setti
               <option value={60_000}>1 分钟</option>
             </select>
           </label>
+          <label className="field">
+            <span>VMware ESXi 宿主</span>
+            <select
+              aria-label="VMware ESXi 宿主服务"
+              value={topologyDraft.vmHostServiceId}
+              onChange={(event) => setTopologyDraft({
+                ...topologyDraft,
+                vmHostServiceId: event.target.value,
+                dockerHostServiceId: event.target.value === topologyDraft.dockerHostServiceId
+                  ? ''
+                  : topologyDraft.dockerHostServiceId,
+              })}
+            >
+              <option value="">未关联服务</option>
+              {hostServices.map((service) => (
+                <option
+                  key={service.id}
+                  value={service.id}
+                  disabled={service.id === topologyDraft.dockerHostServiceId}
+                >
+                  {service.name}
+                </option>
+              ))}
+            </select>
+          </label>
+          <label className="field">
+            <span>Synology Docker 宿主</span>
+            <select
+              aria-label="Synology Docker 宿主服务"
+              value={topologyDraft.dockerHostServiceId}
+              onChange={(event) => setTopologyDraft({
+                ...topologyDraft,
+                vmHostServiceId: event.target.value === topologyDraft.vmHostServiceId
+                  ? ''
+                  : topologyDraft.vmHostServiceId,
+                dockerHostServiceId: event.target.value,
+              })}
+            >
+              <option value="">未关联服务</option>
+              {hostServices.map((service) => (
+                <option
+                  key={service.id}
+                  value={service.id}
+                  disabled={service.id === topologyDraft.vmHostServiceId}
+                >
+                  {service.name}
+                </option>
+              ))}
+            </select>
+          </label>
           <div className="config-summary settings-field-wide">
             <Network size={22} />
             <div>
-              <strong>{topologyDraft.source === 'ikuai' ? 'iKuai API Token' : '手工节点与链路'}</strong>
+              <strong>{topologyDraft.source === 'ikuai' ? 'iKuai API Token' : '服务目录拓扑'}</strong>
               <span>{topologyDraft.source === 'ikuai'
                 ? '路由器地址与 Token 仅从服务端部署环境读取，不进入配置导出。'
-                : `${config.topology.nodes.length} 个节点 · ${config.topology.links.length} 条链路`}</span>
+                : '拓扑节点由服务中心的运行位置自动生成。'}</span>
             </div>
           </div>
           <button className="button button-primary settings-save" type="submit" disabled={saving}>

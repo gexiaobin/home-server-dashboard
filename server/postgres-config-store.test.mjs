@@ -91,6 +91,8 @@ describe('PostgresConfigStore', () => {
     await expect(store.get()).resolves.toEqual(saved);
     expect(pool.readDocument()).toEqual(saved);
     expect(saved.services[0]).toMatchObject({
+      scope: 'internal',
+      runtime: 'infrastructure',
       category: '其他',
       check: { type: 'none' },
       externalUrl: input.services[0].externalUrl,
@@ -116,6 +118,8 @@ describe('PostgresConfigStore', () => {
     expect(saved.topology).toEqual({
       source: 'ikuai',
       refreshInterval: 30_000,
+      vmHostServiceId: '',
+      dockerHostServiceId: '',
       nodes: [],
       links: [],
     });
@@ -139,6 +143,8 @@ describe('PostgresConfigStore', () => {
       id: 'nas',
       url: 'https://nas.home.arpa:5001',
       externalUrl: '',
+      scope: 'internal',
+      runtime: 'infrastructure',
       iconAllowInsecureTls: false,
     });
     expect(pool.readDocument()).toEqual(legacyDocument);
@@ -156,7 +162,38 @@ describe('PostgresConfigStore', () => {
     const store = createStore(pool, dataDir);
     await expect(store.get()).resolves.toMatchObject({ settings: { title: 'Migrated' } });
     expect(pool.readDocument()).toMatchObject({ settings: { title: 'Migrated' } });
-    expect(pool.readDocument().services[0]).toMatchObject({ externalUrl: '' });
+    expect(pool.readDocument().services[0]).toMatchObject({
+      externalUrl: '',
+      scope: 'internal',
+      runtime: 'infrastructure',
+    });
+  });
+
+  it('stores external bookmarks in canonical normalized form', async () => {
+    const dataDir = await createTemporaryDirectory();
+    const pool = createPool();
+    const store = createStore(pool, dataDir);
+
+    const saved = await store.put({
+      services: [{
+        id: 'jd-cloud',
+        name: 'JD Cloud',
+        url: 'https://console.jdcloud.com/',
+        externalUrl: 'https://legacy.example.com/',
+        scope: 'external',
+        runtime: 'infrastructure',
+        check: { type: 'tcp', host: 'console.jdcloud.com', port: 443 },
+      }],
+    });
+
+    expect(saved.services[0]).toMatchObject({
+      url: 'https://console.jdcloud.com/',
+      externalUrl: '',
+      scope: 'external',
+      runtime: 'infrastructure',
+      check: { type: 'none' },
+    });
+    expect(pool.readDocument()).toEqual(saved);
   });
 
   it('rejects invalid configuration before writing to PostgreSQL', async () => {
