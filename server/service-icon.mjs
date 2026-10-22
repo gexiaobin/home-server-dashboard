@@ -5,6 +5,7 @@ import { request as httpsRequest } from 'node:https';
 import { BlockList, isIP } from 'node:net';
 
 import { parse } from 'parse5';
+import { getDomain } from 'tldts';
 
 const DEFAULT_TIMEOUT_MS = 5000;
 const DEFAULT_HTML_LIMIT = 256 * 1024;
@@ -90,6 +91,23 @@ function isPublicNetworkAddress(address) {
 
 function hostnameWithoutBrackets(hostname) {
   return hostname.startsWith('[') && hostname.endsWith(']') ? hostname.slice(1, -1) : hostname;
+}
+
+function isSameRegistrableDomain(left, right) {
+  const leftHostname = hostnameWithoutBrackets(left.hostname).toLowerCase();
+  const rightHostname = hostnameWithoutBrackets(right.hostname).toLowerCase();
+  if (leftHostname === rightHostname) return true;
+  const options = { allowPrivateDomains: true };
+  const leftDomain = getDomain(leftHostname, options);
+  return Boolean(leftDomain) && leftDomain === getDomain(rightHostname, options);
+}
+
+export function isAllowedServicePageRedirect(current, next) {
+  return current.protocol === 'https:'
+    && current.port === ''
+    && next.protocol === 'https:'
+    && next.port === ''
+    && isSameRegistrableDomain(current, next);
 }
 
 function rejectNonPublicAddress(hostname, address) {
@@ -235,27 +253,30 @@ function requestOnce(target, {
 export async function requestServiceResource(url, {
   accept = '*/*',
   acceptedStatusCodes = [],
+  allowSameRegistrableDomainRedirects = false,
   allowInsecureTls = false,
   lookup = dnsLookup,
   maxBytes = DEFAULT_ICON_LIMIT,
   maxRedirects = 3,
+  request = requestOnce,
   requirePublicNetwork = false,
   timeoutMs = DEFAULT_TIMEOUT_MS,
 } = {}) {
   let target = parseHttpUrl(url);
-  const allowedOrigin = target.origin;
+  const insecureTlsOrigin = target.origin;
   const deadline = Date.now() + timeoutMs;
-  const pinnedLookup = requirePublicNetwork
+  const mustUsePublicNetwork = requirePublicNetwork || allowSameRegistrableDomainRedirects;
+  let pinnedLookup = mustUsePublicNetwork
     ? createPinnedLookup(await resolvePublicAddresses(target.hostname, lookup, timeoutMs))
     : undefined;
 
   for (let redirectCount = 0; ; redirectCount += 1) {
     const remainingMs = deadline - Date.now();
     if (remainingMs <= 0) throw new Error(`Request timed out after ${timeoutMs} ms`);
-    const result = await requestOnce(target, {
+    const result = await request(target, {
       accept,
       acceptedStatusCodes,
-      allowInsecureTls,
+      allowInsecureTls: allowInsecureTls && target.origin === insecureTlsOrigin,
       lookup: pinnedLookup,
       maxBytes,
       timeoutMs: remainingMs,
@@ -264,8 +285,15 @@ export async function requestServiceResource(url, {
     if (result.status >= 300 && result.status < 400 && location) {
       if (redirectCount >= maxRedirects) throw new Error('Too many redirects');
       const next = parseHttpUrl(new URL(location, target).toString());
-      if (next.origin !== allowedOrigin) {
-        throw new Error('Cross-origin redirects are not allowed');
+      if (next.origin !== target.origin) {
+        if (!allowSameRegistrableDomainRedirects || !isAllowedServicePageRedirect(target, next)) {
+          throw new Error('Cross-origin redirects are not allowed');
+        }
+        const redirectRemainingMs = deadline - Date.now();
+        if (redirectRemainingMs <= 0) throw new Error(`Request timed out after ${timeoutMs} ms`);
+        pinnedLookup = createPinnedLookup(
+          await resolvePublicAddresses(next.hostname, lookup, redirectRemainingMs),
+        );
       }
       target = next;
       continue;
@@ -373,10 +401,12 @@ export function detectIconContentType(body, declaredType = '') {
 }
 
 export async function resolveServiceIcon(serviceUrl, {
+  allowSameRegistrableDomainRedirects = false,
   allowInsecureTls = false,
   htmlLimit = DEFAULT_HTML_LIMIT,
   iconLimit = DEFAULT_ICON_LIMIT,
   requestResource = requestServiceResource,
+  requirePublicNetwork = false,
   timeoutMs = DEFAULT_TIMEOUT_MS,
   now = () => Date.now(),
 } = {}) {
@@ -395,8 +425,10 @@ export async function resolveServiceIcon(serviceUrl, {
     const page = await requestWithinDeadline(configuredUrl, {
       accept: 'text/html,application/xhtml+xml;q=0.9,*/*;q=0.1',
       acceptedStatusCodes: AUTHENTICATION_PAGE_STATUS_CODES,
+      allowSameRegistrableDomainRedirects,
       allowInsecureTls,
       maxBytes: htmlLimit,
+      requirePublicNetwork,
     });
     const contentType = getHeader(page.headers, 'content-type').toLowerCase();
     if (contentType.startsWith('text/html') || contentType.startsWith('application/xhtml+xml')) {
@@ -412,9 +444,9 @@ export async function resolveServiceIcon(serviceUrl, {
       const candidateUrl = parseHttpUrl(candidate);
       const icon = await requestWithinDeadline(candidateUrl, {
         accept: 'image/avif,image/webp,image/svg+xml,image/png,image/jpeg,image/gif,image/x-icon,*/*;q=0.1',
-        allowInsecureTls: allowInsecureTls && isSameOrigin(candidateUrl, pageUrl),
+        allowInsecureTls: allowInsecureTls && isSameOrigin(candidateUrl, configuredUrl),
         maxBytes: iconLimit,
-        requirePublicNetwork: !isSameOrigin(candidateUrl, pageUrl),
+        requirePublicNetwork: requirePublicNetwork || !isSameOrigin(candidateUrl, pageUrl),
       });
       if (!isSameOrigin(parseHttpUrl(icon.url || candidateUrl), candidateUrl)) continue;
       const contentType = detectIconContentType(icon.body, getHeader(icon.headers, 'content-type'));
@@ -468,7 +500,8 @@ export function createServiceIconFetcher({
   return async function fetchServiceIcon(service) {
     const normalizedUrl = parseHttpUrl(service?.url).toString();
     const allowServiceInsecureTls = allowInsecureTls || service?.iconAllowInsecureTls === true;
-    const key = `${String(service?.id || '')}\n${normalizedUrl}\n${allowServiceInsecureTls ? 'insecure' : 'strict'}`;
+    const isExternalBookmark = service?.scope === 'external';
+    const key = `${String(service?.id || '')}\n${normalizedUrl}\n${allowServiceInsecureTls ? 'insecure' : 'strict'}\n${isExternalBookmark ? 'public' : 'internal'}`;
     const cached = cache.get(key);
     if (cached && cached.expiresAt > now()) {
       cache.delete(key);
@@ -480,7 +513,9 @@ export function createServiceIconFetcher({
     if (inflight.has(key)) return inflight.get(key);
 
     const pending = resolver(normalizedUrl, {
+      allowSameRegistrableDomainRedirects: isExternalBookmark,
       allowInsecureTls: allowServiceInsecureTls,
+      requirePublicNetwork: isExternalBookmark,
       timeoutMs,
     })
       .then((result) => {

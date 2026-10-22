@@ -9,6 +9,7 @@ const service = {
   id: 'home-assistant',
   name: 'qBittorrent',
   url: 'http://192.0.2.8:8080/#/login',
+  scope: 'internal' as const,
   icon: 'house',
   iconAllowInsecureTls: false,
 };
@@ -90,6 +91,19 @@ describe('ServiceAppIcon', () => {
     expect(container.querySelector('img')).toBeNull();
 
     rerender(<ServiceAppIcon service={{ ...service, iconAllowInsecureTls: true }} />);
+    expect(container.querySelector('img')).toHaveAttribute(
+      'src',
+      '/api/services/home-assistant/icon',
+    );
+  });
+
+  it('retries immediately after the service scope changes', () => {
+    const { container, rerender } = render(<ServiceAppIcon service={service} />);
+
+    fireEvent.error(container.querySelector('img') as HTMLImageElement);
+    expect(container.querySelector('img')).toBeNull();
+
+    rerender(<ServiceAppIcon service={{ ...service, scope: 'external' }} />);
     expect(container.querySelector('img')).toHaveAttribute(
       'src',
       '/api/services/home-assistant/icon',

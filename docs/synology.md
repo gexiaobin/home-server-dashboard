@@ -55,7 +55,7 @@ BASIC_AUTH_PASSWORD=
 
 生产环境建议将镜像改成明确版本，例如 `:1.0.0`，避免 `latest` 自动变化。不要把实际数据库 URI 或 iKuai Token 写入 Compose、`.env`、README 或截图；数据库应使用专用账号，不要长期使用 `postgres` 超级用户。
 
-服务目录会从每个条目的 `url` 发现页面声明的真实 favicon，并支持页面明确引用的公网 HTTPS CDN 图标。内网服务的 `url` 是内网地址，外网书签的 `url` 是公开地址；图标始终由容器代理获取，切换网络模式不会改用 `externalUrl`。跨域图标只允许 HTTPS 默认端口，DNS 结果必须是公网地址，且第三方图标主机会看到 NAS 的出口 IP，因此只应配置可信页面。全局 `SERVICE_ICON_ALLOW_INSECURE_TLS` 应保持默认的 `false`；可信内网设备使用自签名或过期 HTTPS 证书时，在服务编辑窗口只为该服务打开“允许自签名 HTTPS 图标”。跨域 HTTPS 图标始终校验证书。
+服务目录会从每个条目的 `url` 发现页面声明的真实 favicon，并支持页面明确引用的公网 HTTPS CDN 图标。内网服务的 `url` 是内网地址，外网书签的 `url` 是公开地址；图标始终由容器代理获取，切换网络模式不会改用 `externalUrl`。外网书签页面只允许在 HTTPS 默认端口下跳转到同一可注册域名，初始地址和每次换源都会重新校验公网 DNS 并固定连接地址；跨域图标也只允许 HTTPS 默认端口和公网地址。第三方图标主机会看到 NAS 的出口 IP，因此只应配置可信页面。全局 `SERVICE_ICON_ALLOW_INSECURE_TLS` 应保持默认的 `false`；可信内网设备使用自签名或过期 HTTPS 证书时，在服务编辑窗口只为该服务打开“允许自签名 HTTPS 图标”。跨域 HTTPS 图标始终校验证书。
 
 ## 3. 目录权限
 

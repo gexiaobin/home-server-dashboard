@@ -5,6 +5,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import {
   createServiceIconFetcher,
   detectIconContentType,
+  isAllowedServicePageRedirect,
   parseIconCandidates,
   requestServiceResource,
   resolveServiceIcon,
@@ -128,6 +129,34 @@ describe('detectIconContentType', () => {
   });
 });
 
+describe('service page redirect policy', () => {
+  it('only permits default-port HTTPS redirects within the same registrable domain', () => {
+    expect(isAllowedServicePageRedirect(
+      new URL('https://home.console.aliyun.com/'),
+      new URL('https://account.aliyun.com/login'),
+    )).toBe(true);
+    expect(isAllowedServicePageRedirect(
+      new URL('https://home.console.aliyun.com/'),
+      new URL('https://attacker.example/login'),
+    )).toBe(false);
+    expect(isAllowedServicePageRedirect(
+      new URL('http://home.console.aliyun.com/'),
+      new URL('https://account.aliyun.com/login'),
+    )).toBe(false);
+    expect(isAllowedServicePageRedirect(
+      new URL('https://home.console.aliyun.com/'),
+      new URL('https://account.aliyun.com:8443/login'),
+    )).toBe(false);
+  });
+
+  it('treats private suffix tenants as separate registrable domains', () => {
+    expect(isAllowedServicePageRedirect(
+      new URL('https://tenant-a.github.io/'),
+      new URL('https://tenant-b.github.io/'),
+    )).toBe(false);
+  });
+});
+
 describe('resolveServiceIcon', () => {
   it.each([401, 403])('discovers a declared icon from an HTTP %i authentication page', async (statusCode) => {
     const baseUrl = await serve((request, response) => {
@@ -240,6 +269,67 @@ describe('resolveServiceIcon', () => {
       allowInsecureTls: false,
       requirePublicNetwork: true,
     });
+  });
+
+  it('discovers the Aliyun CDN icon from a permitted account-page redirect', async () => {
+    const requestResource = vi.fn(async (url, options) => {
+      const target = new URL(String(url));
+      if (target.hostname === 'home.console.aliyun.com') {
+        expect(options).toMatchObject({
+          allowSameRegistrableDomainRedirects: true,
+          requirePublicNetwork: true,
+        });
+        return {
+          url: new URL('https://account.aliyun.com/login/login.htm'),
+          headers: { 'content-type': 'text/html;charset=UTF-8' },
+          body: Buffer.from(`
+            <link rel="icon"
+              href="//img.alicdn.com/tfs/TB1_ZXuNcfpK1RjSZFOXXa6nFXa-32-32.ico"
+              type="image/x-icon">
+          `),
+        };
+      }
+      expect(target.hostname).toBe('img.alicdn.com');
+      return { url: target, headers: { 'content-type': 'image/x-icon' }, body: PNG };
+    });
+
+    await expect(resolveServiceIcon('https://home.console.aliyun.com/', {
+      allowSameRegistrableDomainRedirects: true,
+      requestResource,
+      requirePublicNetwork: true,
+    })).resolves.toMatchObject({ body: PNG, contentType: 'image/png' });
+    expect(String(requestResource.mock.calls[1][0]))
+      .toBe('https://img.alicdn.com/tfs/TB1_ZXuNcfpK1RjSZFOXXa6nFXa-32-32.ico');
+    expect(requestResource.mock.calls[1][1]).toMatchObject({
+      allowInsecureTls: false,
+      requirePublicNetwork: true,
+    });
+  });
+
+  it('revalidates a same-origin icon from a redirected external page', async () => {
+    const requestResource = vi.fn(async (url, options) => {
+      const target = new URL(String(url));
+      if (target.hostname === 'home.console.aliyun.com') {
+        return {
+          url: new URL('https://account.aliyun.com/login/login.htm'),
+          headers: { 'content-type': 'text/html' },
+          body: Buffer.from('<link rel="icon" href="/favicon.png">'),
+        };
+      }
+      expect(target.toString()).toBe('https://account.aliyun.com/favicon.png');
+      expect(options).toMatchObject({
+        allowInsecureTls: false,
+        requirePublicNetwork: true,
+      });
+      return { url: target, headers: {}, body: PNG };
+    });
+
+    await expect(resolveServiceIcon('https://home.console.aliyun.com/', {
+      allowInsecureTls: true,
+      allowSameRegistrableDomainRedirects: true,
+      requestResource,
+      requirePublicNetwork: true,
+    })).resolves.toMatchObject({ body: PNG, contentType: 'image/png' });
   });
 
   it('rejects a cross-origin candidate response that leaves the candidate origin', async () => {
@@ -402,6 +492,86 @@ describe('requestServiceResource', () => {
     await expect(requestServiceResource(slowUrl, { timeoutMs: 25 })).rejects.toThrow('timed out');
   });
 
+  it('revalidates and pins DNS for every permitted cross-origin redirect', async () => {
+    const records = new Map([
+      ['home.console.aliyun.com', [{ address: '93.184.216.34', family: 4 }]],
+      ['account.aliyun.com', [{ address: '1.1.1.1', family: 4 }]],
+    ]);
+    const lookup = vi.fn(async (hostname) => records.get(hostname) || []);
+    const pinnedAddresses = [];
+    const request = vi.fn(async (target, options) => {
+      const addresses = await new Promise((resolve, reject) => {
+        options.lookup(target.hostname, { all: true }, (error, result) => (
+          error ? reject(error) : resolve(result)
+        ));
+      });
+      pinnedAddresses.push([target.hostname, addresses]);
+      if (target.hostname === 'home.console.aliyun.com') {
+        return {
+          status: 302,
+          headers: { location: 'https://account.aliyun.com/login/login.htm' },
+          body: Buffer.alloc(0),
+          url: target,
+        };
+      }
+      return { status: 200, headers: {}, body: PNG, url: target };
+    });
+
+    await expect(requestServiceResource('https://home.console.aliyun.com/', {
+      allowInsecureTls: true,
+      allowSameRegistrableDomainRedirects: true,
+      lookup,
+      request,
+      requirePublicNetwork: true,
+    })).resolves.toMatchObject({ status: 200, body: PNG });
+
+    expect(lookup.mock.calls.map(([hostname]) => hostname)).toEqual([
+      'home.console.aliyun.com',
+      'account.aliyun.com',
+    ]);
+    expect(pinnedAddresses).toEqual([
+      ['home.console.aliyun.com', records.get('home.console.aliyun.com')],
+      ['account.aliyun.com', records.get('account.aliyun.com')],
+    ]);
+    expect(request.mock.calls.map(([, options]) => options.allowInsecureTls)).toEqual([true, false]);
+  });
+
+  it('makes public DNS validation an invariant of the relaxed redirect policy', async () => {
+    const lookup = vi.fn(async () => [{ address: '127.0.0.1', family: 4 }]);
+    const request = vi.fn();
+
+    await expect(requestServiceResource('https://home.console.aliyun.com/', {
+      allowSameRegistrableDomainRedirects: true,
+      lookup,
+      request,
+    })).rejects.toThrow('non-public address 127.0.0.1');
+
+    expect(lookup).toHaveBeenCalledWith('home.console.aliyun.com', { all: true, verbatim: true });
+    expect(request).not.toHaveBeenCalled();
+  });
+
+  it('rejects a same-domain redirect when the new host resolves to a private address', async () => {
+    const lookup = vi.fn(async (hostname) => [{
+      address: hostname === 'home.console.aliyun.com' ? '93.184.216.34' : '127.0.0.1',
+      family: 4,
+    }]);
+    const request = vi.fn(async (target) => ({
+      status: 302,
+      headers: { location: 'https://account.aliyun.com/login/login.htm' },
+      body: Buffer.alloc(0),
+      url: target,
+    }));
+
+    await expect(requestServiceResource('https://home.console.aliyun.com/', {
+      allowSameRegistrableDomainRedirects: true,
+      lookup,
+      request,
+      requirePublicNetwork: true,
+    })).rejects.toThrow('non-public address 127.0.0.1');
+    expect(request).toHaveBeenCalledTimes(1);
+    expect(lookup).toHaveBeenCalledTimes(2);
+  });
+
   it('rejects private DNS results before sending an HTTP request', async () => {
     const handler = vi.fn((_request, response) => response.end(PNG));
     const baseUrl = new URL(await serve(handler));
@@ -468,6 +638,29 @@ describe('createServiceIconFetcher', () => {
     await expect(fetchIcon(service)).rejects.toBeInstanceOf(ServiceIconNotFoundError);
     await expect(fetchIcon(service)).rejects.toBeInstanceOf(ServiceIconNotFoundError);
     expect(resolver).toHaveBeenCalledTimes(1);
+  });
+
+  it('only enables public same-domain page redirects for external bookmarks', async () => {
+    const resolver = vi.fn(async () => ({ body: PNG, contentType: 'image/png', etag: '"png"' }));
+    const fetchIcon = createServiceIconFetcher({ resolver });
+    const service = {
+      id: 'cloud',
+      url: 'https://home.console.aliyun.com/',
+      scope: 'external',
+    };
+
+    await fetchIcon(service);
+    await fetchIcon({ ...service, scope: 'internal' });
+
+    expect(resolver).toHaveBeenCalledTimes(2);
+    expect(resolver.mock.calls[0][1]).toMatchObject({
+      allowSameRegistrableDomainRedirects: true,
+      requirePublicNetwork: true,
+    });
+    expect(resolver.mock.calls[1][1]).toMatchObject({
+      allowSameRegistrableDomainRedirects: false,
+      requirePublicNetwork: false,
+    });
   });
 
   it('uses and caches the per-service insecure TLS opt-in independently', async () => {

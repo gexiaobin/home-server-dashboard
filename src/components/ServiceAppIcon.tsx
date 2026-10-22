@@ -4,11 +4,11 @@ import type { Service } from '../types';
 import { getServiceIcon } from './icons';
 
 interface ServiceAppIconProps {
-  service: Pick<Service, 'id' | 'url' | 'icon' | 'iconAllowInsecureTls'>;
+  service: Pick<Service, 'id' | 'url' | 'scope' | 'icon' | 'iconAllowInsecureTls'>;
 }
 
 export function ServiceAppIcon({ service }: ServiceAppIconProps) {
-  const sourceKey = `${service.id}\n${service.url}\n${service.iconAllowInsecureTls ? 'insecure' : 'strict'}`;
+  const sourceKey = `${service.id}\n${service.url}\n${service.scope}\n${service.iconAllowInsecureTls ? 'insecure' : 'strict'}`;
 
   return (
     <ServiceAppIconSource
