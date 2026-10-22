@@ -30,6 +30,7 @@ function service(overrides: Pick<Service, 'id' | 'name' | 'url' | 'scope' | 'run
     externalUrl: '',
     category: '测试',
     icon: 'default',
+    iconUrl: '',
     iconAllowInsecureTls: false,
     favorite: false,
     check: { type: 'none' },

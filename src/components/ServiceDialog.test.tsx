@@ -59,6 +59,7 @@ describe('ServiceDialog', () => {
     expect(screen.queryByLabelText('允许自签名 HTTPS 图标')).not.toBeInTheDocument();
 
     fireEvent.change(screen.getByLabelText('书签地址'), { target: { value: ' https://console.aliyun.com/ ' } });
+    fireEvent.change(screen.getByLabelText('自定义图标地址（可选）'), { target: { value: ' https://cdn.example.com/aliyun.png ' } });
     fireEvent.click(screen.getByRole('button', { name: '保存书签' }));
 
     await waitFor(() => expect(onSave).toHaveBeenCalledOnce());
@@ -69,6 +70,7 @@ describe('ServiceDialog', () => {
       scope: 'external',
       runtime: 'infrastructure',
       iconAllowInsecureTls: false,
+      iconUrl: 'https://cdn.example.com/aliyun.png',
       check: { type: 'none' },
     }));
   });
@@ -94,6 +96,18 @@ describe('ServiceDialog', () => {
     fireEvent.click(screen.getByRole('button', { name: '保存服务' }));
 
     expect(await screen.findByRole('alert')).toHaveTextContent('互联网地址必须是完整的 http:// 或 https:// 地址。');
+    expect(onSave).not.toHaveBeenCalled();
+  });
+
+  it('rejects an unsafe custom icon URL', async () => {
+    const onSave = renderDialog();
+
+    fireEvent.change(screen.getByLabelText('服务名称'), { target: { value: 'Vaultwarden' } });
+    fireEvent.change(screen.getByLabelText('内网地址'), { target: { value: 'http://vault.home.arpa' } });
+    fireEvent.change(screen.getByLabelText('自定义图标地址（可选）'), { target: { value: 'data:image/png;base64,AAAA' } });
+    fireEvent.click(screen.getByRole('button', { name: '保存服务' }));
+
+    expect(await screen.findByRole('alert')).toHaveTextContent('自定义图标地址必须是完整的 http:// 或 https:// 地址。');
     expect(onSave).not.toHaveBeenCalled();
   });
 

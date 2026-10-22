@@ -4,11 +4,13 @@ import type { Service } from '../types';
 import { getServiceIcon } from './icons';
 
 interface ServiceAppIconProps {
-  service: Pick<Service, 'id' | 'url' | 'scope' | 'icon' | 'iconAllowInsecureTls'>;
+  service: Pick<Service, 'id' | 'url' | 'scope' | 'icon' | 'iconUrl' | 'iconAllowInsecureTls'>;
 }
 
+const RETRY_DELAYS_MS = [15_000, 60_000, 180_000];
+
 export function ServiceAppIcon({ service }: ServiceAppIconProps) {
-  const sourceKey = `${service.id}\n${service.url}\n${service.scope}\n${service.iconAllowInsecureTls ? 'insecure' : 'strict'}`;
+  const sourceKey = `${service.id}\n${service.url}\n${service.iconUrl}\n${service.scope}\n${service.iconAllowInsecureTls ? 'insecure' : 'strict'}`;
 
   return (
     <ServiceAppIconSource
@@ -26,11 +28,11 @@ function ServiceAppIconSource({ source, fallbackIcon }: { source: string; fallba
   const [retryCount, setRetryCount] = useState(0);
 
   useEffect(() => {
-    if (!imageFailed || retryCount >= 1) return undefined;
+    if (!imageFailed || retryCount >= RETRY_DELAYS_MS.length) return undefined;
     const retryTimer = window.setTimeout(() => {
       setRetryCount((current) => current + 1);
       setImageFailed(false);
-    }, 60_000);
+    }, RETRY_DELAYS_MS[retryCount]);
     return () => window.clearTimeout(retryTimer);
   }, [imageFailed, retryCount]);
 
@@ -44,7 +46,7 @@ function ServiceAppIconSource({ source, fallbackIcon }: { source: string; fallba
       {!imageFailed && (
         <img
           className={`service-app-icon-image ${imageLoaded ? 'is-loaded' : ''}`}
-          src={source}
+          src={retryCount === 0 ? source : `${source}?retry=${retryCount}`}
           alt=""
           decoding="async"
           referrerPolicy="no-referrer"

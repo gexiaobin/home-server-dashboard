@@ -93,6 +93,7 @@ describe('ConfigStore', () => {
         runtime: 'infrastructure',
         category: '其他',
         icon: 'default',
+        iconUrl: '',
         iconAllowInsecureTls: false,
         favorite: false,
         ...config.services[0],
@@ -136,6 +137,7 @@ describe('ConfigStore', () => {
       externalUrl: '',
       scope: 'internal',
       runtime: 'infrastructure',
+      iconUrl: '',
       iconAllowInsecureTls: false,
     });
     expect(config.settings.hostDisplayName).toBe('');
@@ -182,6 +184,33 @@ describe('ConfigStore', () => {
         iconAllowInsecureTls: 'yes',
       }],
     })).rejects.toThrow('services[0].iconAllowInsecureTls must be a boolean');
+  });
+
+  it('normalizes and validates an optional custom icon URL', async () => {
+    const dataDir = await createTemporaryDirectory();
+    const store = new ConfigStore({
+      dataDir,
+      defaultsFile: path.join(dataDir, 'missing-defaults.json'),
+    });
+
+    const saved = await store.put({
+      services: [{
+        id: 'cloud',
+        name: 'Cloud',
+        url: 'https://console.example.com',
+        iconUrl: '  https://cdn.example.com/icon.png  ',
+      }],
+    });
+    expect(saved.services[0].iconUrl).toBe('https://cdn.example.com/icon.png');
+
+    await expect(store.put({
+      services: [{
+        id: 'cloud',
+        name: 'Cloud',
+        url: 'https://console.example.com',
+        iconUrl: 'file:///etc/passwd',
+      }],
+    })).rejects.toThrow('services[0].iconUrl must use http or https');
   });
 
   it('accepts an empty external URL and validates non-empty external URLs', async () => {

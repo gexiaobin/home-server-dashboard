@@ -11,6 +11,7 @@ const service = {
   url: 'http://192.0.2.8:8080/#/login',
   scope: 'internal' as const,
   icon: 'house',
+  iconUrl: '',
   iconAllowInsecureTls: false,
 };
 
@@ -39,20 +40,34 @@ describe('ServiceAppIcon', () => {
     expect(container.querySelector('svg')).toBeInTheDocument();
   });
 
-  it('retries one transient failure after the server negative cache expires', () => {
+  it('retries transient failures with cache-busting URLs', () => {
     vi.useFakeTimers();
     try {
       const { container } = render(<ServiceAppIcon service={service} />);
       fireEvent.error(container.querySelector('img') as HTMLImageElement);
 
-      act(() => vi.advanceTimersByTime(60_000));
+      act(() => vi.advanceTimersByTime(15_000));
       expect(container.querySelector('img')).toHaveAttribute(
         'src',
-        '/api/services/home-assistant/icon',
+        '/api/services/home-assistant/icon?retry=1',
       );
 
       fireEvent.error(container.querySelector('img') as HTMLImageElement);
       act(() => vi.advanceTimersByTime(60_000));
+      expect(container.querySelector('img')).toHaveAttribute(
+        'src',
+        '/api/services/home-assistant/icon?retry=2',
+      );
+
+      fireEvent.error(container.querySelector('img') as HTMLImageElement);
+      act(() => vi.advanceTimersByTime(180_000));
+      expect(container.querySelector('img')).toHaveAttribute(
+        'src',
+        '/api/services/home-assistant/icon?retry=3',
+      );
+
+      fireEvent.error(container.querySelector('img') as HTMLImageElement);
+      act(() => vi.advanceTimersByTime(180_000));
       expect(container.querySelector('img')).toBeNull();
     } finally {
       vi.useRealTimers();
@@ -91,6 +106,18 @@ describe('ServiceAppIcon', () => {
     expect(container.querySelector('img')).toBeNull();
 
     rerender(<ServiceAppIcon service={{ ...service, iconAllowInsecureTls: true }} />);
+    expect(container.querySelector('img')).toHaveAttribute(
+      'src',
+      '/api/services/home-assistant/icon',
+    );
+  });
+
+  it('retries immediately after a custom icon URL is added', () => {
+    const { container, rerender } = render(<ServiceAppIcon service={service} />);
+
+    fireEvent.error(container.querySelector('img') as HTMLImageElement);
+    rerender(<ServiceAppIcon service={{ ...service, iconUrl: 'https://cdn.example.test/icon.png' }} />);
+
     expect(container.querySelector('img')).toHaveAttribute(
       'src',
       '/api/services/home-assistant/icon',

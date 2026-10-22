@@ -29,6 +29,7 @@ const externalBookmark: Service = {
   runtime: 'infrastructure',
   category: '云服务',
   icon: 'default',
+  iconUrl: '',
   iconAllowInsecureTls: false,
   favorite: false,
   check: { type: 'none' },

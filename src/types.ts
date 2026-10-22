@@ -20,6 +20,7 @@ export interface Service {
   runtime: ServiceRuntime;
   category: string;
   icon: string;
+  iconUrl: string;
   iconAllowInsecureTls: boolean;
   favorite: boolean;
   check: ServiceCheck;

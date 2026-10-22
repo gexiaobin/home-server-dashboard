@@ -56,11 +56,11 @@ iKuai 动态拓扑同样推荐使用 `docker-compose.ikuai.yml`。在 iKuai Web 
 
 启用 Basic Auth 后，除 `/api/health` 外的页面和 API 都需要登录。Basic Auth 仅编码凭据而不加密传输，因此必须同时使用 HTTPS。如果密码包含 Compose 插值字符（例如 `$`），请按 Compose `.env` 语法使用单引号或正确转义。
 
-服务目录中的图标由 Express 根据每个条目的 `url` 访问目标页面，并解析页面声明的 favicon，包括页面明确引用的公网 HTTPS CDN 图标。内网服务的 `url` 是内网地址，外网书签的 `url` 是公开书签地址。图标由服务端代理，浏览器不会直接访问该第三方地址；切换网络模式不会改变用于发现图标的 `url`。
+服务目录中的图标由 Express 根据每个条目的 `url` 访问目标页面，并解析页面声明的 favicon，包括页面明确引用的公网 HTTPS CDN 图标。抓取器支持标准 HTTP 重定向，以及云控制台常见的成功响应 `Location` 跳转；页面未声明图标时会依次尝试常见的 `/favicon.ico`、`/favicon.svg`、`/favicon.png` 和 `/apple-touch-icon.png`。内网服务的 `url` 是内网地址，外网书签的 `url` 是公开书签地址。图标由服务端代理，浏览器不会直接访问该第三方地址；切换网络模式不会改变用于发现图标的 `url`。
 
 抓取会限制总超时、响应大小和候选数，并根据实际字节判断图片类型。外网书签页面仅允许在 HTTPS 默认端口下跳转到同一可注册域名；初始主机和每次换源后的主机都必须全部解析为公网地址，实际连接会固定到该次校验的地址。页面声明的跨域图标也只允许 HTTPS 默认端口并执行相同的公网 DNS 校验和连接固定；每个图标候选的重定向必须保持在该候选自身的 origin。由于服务页面能够指定第三方图标主机，只应配置可信页面，并注意第三方会看到 NAS 的出口 IP。
 
-严格 TLS 校验是默认行为。可信家庭内网设备使用自签名、过期或与 IP 地址不匹配的证书时，可在该服务的编辑窗口打开“允许自签名 HTTPS 图标”，对应 `iconAllowInsecureTls: true`。该选项只影响这一个服务页面及其同源图标；跨域 HTTPS 图标仍会严格校验证书。`SERVICE_ICON_ALLOW_INSECURE_TLS=true` 是兼容旧部署的全局覆盖项，会对所有服务生效，通常不应使用。两种设置都不影响浏览器访问控制台所用的 HTTPS，也不改变 HTTP/TCP 状态检查设置。
+严格 TLS 校验是默认行为。可信家庭内网设备使用自签名、过期或与 IP 地址不匹配的证书时，可在该服务的编辑窗口打开“允许自签名 HTTPS 图标”，对应 `iconAllowInsecureTls: true`。该选项只影响这一个服务页面及其同源图标；跨域 HTTPS 图标仍会严格校验证书。自动发现被目标站点拦截时，可填写 `iconUrl` 直接指定图片；跨源地址仅允许默认端口 HTTPS，并仍执行公网 DNS、响应类型和重定向校验。`SERVICE_ICON_ALLOW_INSECURE_TLS=true` 是兼容旧部署的全局覆盖项，会对所有服务生效，通常不应使用。两种设置都不影响浏览器访问控制台所用的 HTTPS，也不改变 HTTP/TCP 状态检查设置。
 
 ## 应用配置结构
 
@@ -85,6 +85,7 @@ iKuai 动态拓扑同样推荐使用 `docker-compose.ikuai.yml`。在 iKuai Web 
       "runtime": "infrastructure",
       "category": "基础设施",
       "icon": "server",
+      "iconUrl": "",
       "iconAllowInsecureTls": false,
       "favorite": true,
       "check": {
@@ -130,6 +131,7 @@ iKuai 动态拓扑同样推荐使用 `docker-compose.ikuai.yml`。在 iKuai Web 
 | `runtime` | 否 | `infrastructure`（默认）、`vm` 或 `docker`；只有内网的 `vm`/`docker` 条目进入对应拓扑分支 |
 | `url` | 是 | 内网服务的内网地址，或外网书签的公开地址；也供服务端获取真实图标 |
 | `externalUrl` | 否 | 仅内网服务使用的互联网替代地址；为空时，外网模式下入口不可用且不会回退到内网地址 |
+| `iconUrl` | 否 | 自定义图标的完整 HTTP(S) 地址；留空时自动发现。跨源地址仅允许默认端口 HTTPS |
 | `iconAllowInsecureTls` | 否 | 默认 `false`；仅为此服务页面及同源图标跳过 HTTPS 证书校验，限可信内网的自签名设备使用 |
 
 两个地址只允许使用完整的 `http://` 或 `https://` URL。互联网地址建议使用 HTTPS，并且不要在 URL 中放置密码、Token 或其他秘密，因为页面配置可以通过 API 读取和导出。

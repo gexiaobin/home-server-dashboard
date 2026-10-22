@@ -23,6 +23,7 @@ const blankService: Service = {
   runtime: 'infrastructure',
   category: '其他',
   icon: 'default',
+  iconUrl: '',
   iconAllowInsecureTls: false,
   favorite: false,
   check: { type: 'none' },
@@ -49,6 +50,7 @@ export function ServiceDialog({ service, categories, open, saving, onClose, onSa
             externalUrl: service.externalUrl || '',
             scope: service.scope || 'internal',
             runtime: service.runtime || 'infrastructure',
+            iconUrl: service.iconUrl || '',
           }
         : structuredClone(blankService));
       setError('');
@@ -84,6 +86,15 @@ export function ServiceDialog({ service, categories, open, saving, onClose, onSa
         return;
       }
     }
+    if (draft.iconUrl.trim()) {
+      try {
+        const url = new URL(draft.iconUrl);
+        if (!['http:', 'https:'].includes(url.protocol)) throw new Error();
+      } catch {
+        setError('自定义图标地址必须是完整的 http:// 或 https:// 地址。');
+        return;
+      }
+    }
 
     const checkUrl = !isExternalBookmark && draft.check.type === 'http' ? draft.check.url?.trim() : undefined;
 
@@ -97,6 +108,7 @@ export function ServiceDialog({ service, categories, open, saving, onClose, onSa
       scope: isExternalBookmark ? 'external' : 'internal',
       runtime: isExternalBookmark ? 'infrastructure' : draft.runtime,
       category: draft.category.trim() || '其他',
+      iconUrl: draft.iconUrl.trim(),
       iconAllowInsecureTls: isExternalBookmark ? false : draft.iconAllowInsecureTls,
       check: isExternalBookmark
         ? { type: 'none' as const }
@@ -236,6 +248,17 @@ export function ServiceDialog({ service, categories, open, saving, onClose, onSa
               <select value={draft.icon} onChange={(event) => setDraft({ ...draft, icon: event.target.value })}>
                 {serviceIconOptions.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}
               </select>
+            </label>
+            <label className="field field-span-2">
+              <span>自定义图标地址（可选）</span>
+              <div className="input-with-icon">
+                <Globe2 size={15} />
+                <input
+                  value={draft.iconUrl}
+                  onChange={(event) => setDraft({ ...draft, iconUrl: event.target.value })}
+                  placeholder="https://example.com/favicon.png"
+                />
+              </div>
             </label>
             <label className="field field-span-2">
               <span>说明</span>

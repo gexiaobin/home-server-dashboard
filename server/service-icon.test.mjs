@@ -114,6 +114,15 @@ describe('parseIconCandidates', () => {
     expect(candidates).toHaveLength(12);
     expect(candidates.at(-1)).toBe('http://service.example.test/favicon.ico');
   });
+
+  it('tries common conventional icon names when the page declares none', () => {
+    expect(parseIconCandidates('<title>App</title>', 'https://service.example.test/app')).toEqual([
+      'https://service.example.test/favicon.ico',
+      'https://service.example.test/favicon.svg',
+      'https://service.example.test/favicon.png',
+      'https://service.example.test/apple-touch-icon.png',
+    ]);
+  });
 });
 
 describe('detectIconContentType', () => {
@@ -158,6 +167,48 @@ describe('service page redirect policy', () => {
 });
 
 describe('resolveServiceIcon', () => {
+  it('follows an opt-in successful Location header before discovering the icon', async () => {
+    const baseUrl = await serve((request, response) => {
+      if (request.url === '/start') {
+        response.writeHead(200, { 'content-type': 'text/html', location: '/login' })
+          .end('<script>window.location.replace("/login")</script>');
+        return;
+      }
+      if (request.url === '/login') {
+        response.writeHead(200, { 'content-type': 'text/html' })
+          .end('<link rel="icon" href="/cloud.png">');
+        return;
+      }
+      if (request.url === '/cloud.png') {
+        response.writeHead(200, { 'content-type': 'image/png' }).end(PNG);
+        return;
+      }
+      response.writeHead(404).end();
+    });
+
+    await expect(resolveServiceIcon(`${baseUrl}/start`))
+      .resolves.toMatchObject({ body: PNG, contentType: 'image/png' });
+  });
+
+  it('uses a custom icon URL without requesting the service page', async () => {
+    const requestResource = vi.fn(async (url, options) => ({
+      url: new URL(String(url)),
+      headers: { 'content-type': 'image/png' },
+      body: PNG,
+      options,
+    }));
+
+    await expect(resolveServiceIcon('https://service.example.test/app', {
+      iconUrl: 'https://cdn.example.test/custom.png',
+      requestResource,
+      requirePublicNetwork: true,
+    })).resolves.toMatchObject({ body: PNG, contentType: 'image/png' });
+
+    expect(requestResource).toHaveBeenCalledOnce();
+    expect(String(requestResource.mock.calls[0][0])).toBe('https://cdn.example.test/custom.png');
+    expect(requestResource.mock.calls[0][1]).toMatchObject({ requirePublicNetwork: true });
+  });
+
   it.each([401, 403])('discovers a declared icon from an HTTP %i authentication page', async (statusCode) => {
     const baseUrl = await serve((request, response) => {
       if (request.url === '/cgi-bin/luci/admin/quickstart/') {
@@ -474,6 +525,21 @@ describe('requestServiceResource', () => {
       .rejects.toThrow('exceeded 4 bytes');
   });
 
+  it('only follows a successful Location header when explicitly enabled', async () => {
+    const baseUrl = await serve((request, response) => {
+      if (request.url === '/start') {
+        response.writeHead(200, { location: '/landing', 'content-type': 'text/html' }).end('start');
+        return;
+      }
+      response.writeHead(200, { 'content-type': 'text/html' }).end('landing');
+    });
+
+    await expect(requestServiceResource(`${baseUrl}/start`))
+      .resolves.toMatchObject({ body: Buffer.from('start') });
+    await expect(requestServiceResource(`${baseUrl}/start`, { followSuccessfulLocation: true }))
+      .resolves.toMatchObject({ body: Buffer.from('landing') });
+  });
+
   it('rejects cross-host redirects and timeouts', async () => {
     const redirectUrl = await serve((_request, response) => {
       response.writeHead(302, { location: 'http://elsewhere.example/icon.png' }).end();
@@ -628,6 +694,12 @@ describe('createServiceIconFetcher', () => {
 
     await fetchIcon({ ...service, url: 'http://apps.example.test:8081' });
     expect(resolver).toHaveBeenCalledTimes(2);
+
+    await fetchIcon({ ...service, url: 'http://apps.example.test:8081', iconUrl: 'https://cdn.example.test/icon.png' });
+    expect(resolver).toHaveBeenCalledTimes(3);
+    expect(resolver.mock.calls[2][1]).toMatchObject({
+      iconUrl: 'https://cdn.example.test/icon.png',
+    });
   });
 
   it('briefly caches discovery failures', async () => {

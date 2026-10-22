@@ -11,7 +11,7 @@ const DEFAULT_TIMEOUT_MS = 5000;
 const DEFAULT_HTML_LIMIT = 256 * 1024;
 const DEFAULT_ICON_LIMIT = 1024 * 1024;
 const DEFAULT_POSITIVE_TTL_MS = 6 * 60 * 60 * 1000;
-const DEFAULT_NEGATIVE_TTL_MS = 60 * 1000;
+const DEFAULT_NEGATIVE_TTL_MS = 10 * 1000;
 const MAX_ICON_CANDIDATES = 12;
 const AUTHENTICATION_PAGE_STATUS_CODES = [401, 403];
 
@@ -254,6 +254,7 @@ export async function requestServiceResource(url, {
   accept = '*/*',
   acceptedStatusCodes = [],
   allowSameRegistrableDomainRedirects = false,
+  followSuccessfulLocation = false,
   allowInsecureTls = false,
   lookup = dnsLookup,
   maxBytes = DEFAULT_ICON_LIMIT,
@@ -282,7 +283,11 @@ export async function requestServiceResource(url, {
       timeoutMs: remainingMs,
     });
     const location = getHeader(result.headers, 'location');
-    if (result.status >= 300 && result.status < 400 && location) {
+    const isRedirect = result.status >= 300 && result.status < 400;
+    const isSuccessfulHtmlRedirect = followSuccessfulLocation
+      && result.status >= 200
+      && result.status < 300;
+    if ((isRedirect || isSuccessfulHtmlRedirect) && location) {
       if (redirectCount >= maxRedirects) throw new Error('Too many redirects');
       const next = parseHttpUrl(new URL(location, target).toString());
       if (next.origin !== target.origin) {
@@ -371,7 +376,14 @@ export function parseIconCandidates(html, pageUrl) {
     }
   });
 
-  const fallback = new URL('/favicon.ico', page.origin).toString();
+  const conventionalFallbacks = [
+    '/favicon.ico',
+    '/favicon.svg',
+    '/favicon.png',
+    '/apple-touch-icon.png',
+  ].map((pathname) => new URL(pathname, page.origin).toString());
+  const fallback = conventionalFallbacks[0];
+  if (candidates.length === 0) return conventionalFallbacks;
   const uniqueCandidates = [...new Set([
     ...candidates.sort((left, right) => right.score - left.score || left.order - right.order).map((item) => item.url),
     fallback,
@@ -404,6 +416,7 @@ export async function resolveServiceIcon(serviceUrl, {
   allowSameRegistrableDomainRedirects = false,
   allowInsecureTls = false,
   htmlLimit = DEFAULT_HTML_LIMIT,
+  iconUrl = '',
   iconLimit = DEFAULT_ICON_LIMIT,
   requestResource = requestServiceResource,
   requirePublicNetwork = false,
@@ -421,12 +434,41 @@ export async function resolveServiceIcon(serviceUrl, {
     return requestResource(url, { ...options, timeoutMs: remainingMs });
   };
 
+  const readIconCandidate = async (candidate, candidatePageUrl = pageUrl) => {
+    const candidateUrl = parseHttpUrl(candidate);
+    if (!isSameOrigin(candidateUrl, candidatePageUrl)
+      && (candidateUrl.protocol !== 'https:' || candidateUrl.port !== '')) {
+      throw new ServiceIconNotFoundError('Cross-origin icon URL must use default-port HTTPS');
+    }
+    const icon = await requestWithinDeadline(candidateUrl, {
+      accept: 'image/avif,image/webp,image/svg+xml,image/png,image/jpeg,image/gif,image/x-icon,*/*;q=0.1',
+      allowInsecureTls: allowInsecureTls && isSameOrigin(candidateUrl, configuredUrl),
+      maxBytes: iconLimit,
+      requirePublicNetwork: requirePublicNetwork || !isSameOrigin(candidateUrl, candidatePageUrl),
+    });
+    if (!isSameOrigin(parseHttpUrl(icon.url || candidateUrl), candidateUrl)) {
+      throw new ServiceIconNotFoundError('Icon redirected to another origin');
+    }
+    const contentType = detectIconContentType(icon.body, getHeader(icon.headers, 'content-type'));
+    if (!contentType) throw new ServiceIconNotFoundError('Icon response is not a supported image');
+    return {
+      body: icon.body,
+      contentType,
+      etag: `"${createHash('sha256').update(icon.body).digest('hex')}"`,
+    };
+  };
+
+  if (String(iconUrl).trim()) {
+    return readIconCandidate(iconUrl, configuredUrl);
+  }
+
   try {
     const page = await requestWithinDeadline(configuredUrl, {
       accept: 'text/html,application/xhtml+xml;q=0.9,*/*;q=0.1',
       acceptedStatusCodes: AUTHENTICATION_PAGE_STATUS_CODES,
       allowSameRegistrableDomainRedirects,
       allowInsecureTls,
+      followSuccessfulLocation: true,
       maxBytes: htmlLimit,
       requirePublicNetwork,
     });
@@ -441,21 +483,7 @@ export async function resolveServiceIcon(serviceUrl, {
 
   for (const candidate of candidates) {
     try {
-      const candidateUrl = parseHttpUrl(candidate);
-      const icon = await requestWithinDeadline(candidateUrl, {
-        accept: 'image/avif,image/webp,image/svg+xml,image/png,image/jpeg,image/gif,image/x-icon,*/*;q=0.1',
-        allowInsecureTls: allowInsecureTls && isSameOrigin(candidateUrl, configuredUrl),
-        maxBytes: iconLimit,
-        requirePublicNetwork: requirePublicNetwork || !isSameOrigin(candidateUrl, pageUrl),
-      });
-      if (!isSameOrigin(parseHttpUrl(icon.url || candidateUrl), candidateUrl)) continue;
-      const contentType = detectIconContentType(icon.body, getHeader(icon.headers, 'content-type'));
-      if (!contentType) continue;
-      return {
-        body: icon.body,
-        contentType,
-        etag: `"${createHash('sha256').update(icon.body).digest('hex')}"`,
-      };
+      return await readIconCandidate(candidate);
     } catch {
       // Try the next icon declared by the service page.
     }
@@ -499,9 +527,12 @@ export function createServiceIconFetcher({
 
   return async function fetchServiceIcon(service) {
     const normalizedUrl = parseHttpUrl(service?.url).toString();
+    const normalizedIconUrl = String(service?.iconUrl || '').trim()
+      ? parseHttpUrl(service.iconUrl).toString()
+      : '';
     const allowServiceInsecureTls = allowInsecureTls || service?.iconAllowInsecureTls === true;
     const isExternalBookmark = service?.scope === 'external';
-    const key = `${String(service?.id || '')}\n${normalizedUrl}\n${allowServiceInsecureTls ? 'insecure' : 'strict'}\n${isExternalBookmark ? 'public' : 'internal'}`;
+    const key = `${String(service?.id || '')}\n${normalizedUrl}\n${normalizedIconUrl}\n${allowServiceInsecureTls ? 'insecure' : 'strict'}\n${isExternalBookmark ? 'public' : 'internal'}`;
     const cached = cache.get(key);
     if (cached && cached.expiresAt > now()) {
       cache.delete(key);
@@ -515,6 +546,7 @@ export function createServiceIconFetcher({
     const pending = resolver(normalizedUrl, {
       allowSameRegistrableDomainRedirects: isExternalBookmark,
       allowInsecureTls: allowServiceInsecureTls,
+      iconUrl: normalizedIconUrl,
       requirePublicNetwork: isExternalBookmark,
       timeoutMs,
     })

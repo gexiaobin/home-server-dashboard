@@ -127,6 +127,14 @@ export function validateConfig(config) {
       if (service.icon !== undefined && typeof service.icon !== 'string') {
         throw new ConfigValidationError(`services[${index}].icon must be a string`);
       }
+      if (service.iconUrl !== undefined) {
+        if (typeof service.iconUrl !== 'string') {
+          throw new ConfigValidationError(`services[${index}].iconUrl must be a string`);
+        }
+        if (service.iconUrl.trim() !== '') {
+          requireHttpUrl(service.iconUrl, `services[${index}].iconUrl`);
+        }
+      }
       if (service.iconAllowInsecureTls !== undefined && typeof service.iconAllowInsecureTls !== 'boolean') {
         throw new ConfigValidationError(`services[${index}].iconAllowInsecureTls must be a boolean`);
       }
@@ -234,11 +242,13 @@ export function normalizeConfig(defaults, config) {
       runtime: 'infrastructure',
       category: '其他',
       icon: 'default',
+      iconUrl: '',
       iconAllowInsecureTls: false,
       favorite: false,
       check: { type: 'none' },
       ...service,
       externalUrl: service.externalUrl?.trim() || '',
+      iconUrl: service.iconUrl?.trim() || '',
     };
     if (normalized.scope === 'external') {
       normalized.externalUrl = '';
