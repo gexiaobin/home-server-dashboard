@@ -354,7 +354,7 @@ describe('createApp', () => {
           services,
           topology: {
             ...configFixture.topology,
-            vmHostServiceId: 'esxi',
+            hosts: [{ serviceId: 'esxi', nodeType: 'server', serviceIds: ['istoreos', 'qinglong'] }],
             nodes: [
               { id: 'legacy-router', label: 'Legacy Router', type: 'router', status: 'up', x: 50, y: 50 },
               {
@@ -386,9 +386,8 @@ describe('createApp', () => {
     expect(topology.nodes.map((node) => node.id)).toEqual([
       'service-topology-internet',
       'service-topology-router',
-      'service-topology-vm-host',
+      'service-topology-host-esxi',
       'service-topology-service-istoreos',
-      'service-topology-docker-host',
       'service-topology-service-qinglong',
     ]);
     expect(topology.nodes.find((node) => node.type === 'router')).toMatchObject({
@@ -445,8 +444,6 @@ describe('createApp', () => {
     expect(liveTopology.nodes.map((node) => node.id)).toEqual([
       'service-topology-internet',
       'ikuai-router',
-      'service-topology-vm-host',
-      'service-topology-docker-host',
     ]);
     expect(liveTopology.nodes.find((node) => node.type === 'router')).toMatchObject({ status: 'up' });
     expect(liveDependencies.topologyProvider.load).toHaveBeenCalledWith(30_000);
@@ -473,8 +470,6 @@ describe('createApp', () => {
     expect(fallbackTopology.nodes.map((node) => node.id)).toEqual([
       'service-topology-internet',
       'service-topology-router',
-      'service-topology-vm-host',
-      'service-topology-docker-host',
     ]);
     const fallbackRouter = fallbackTopology.nodes.find((node) => node.type === 'router');
     expect(fallbackRouter).toMatchObject({ label: 'iKuai', status: 'unknown' });

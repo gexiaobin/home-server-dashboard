@@ -118,8 +118,7 @@ describe('PostgresConfigStore', () => {
     expect(saved.topology).toEqual({
       source: 'ikuai',
       refreshInterval: 30_000,
-      vmHostServiceId: '',
-      dockerHostServiceId: '',
+      hosts: [],
       nodes: [],
       links: [],
     });

@@ -34,7 +34,7 @@ const NODE_TYPE_LABELS: Record<TopologyNode['type'], string> = {
   internet: '互联网',
   router: '路由器',
   nas: 'NAS',
-  server: '虚拟化主机',
+  server: '服务器',
   vm: '虚拟机',
   container: 'Docker 应用',
   client: '终端',
@@ -53,14 +53,60 @@ function serviceHostname(service?: Service): string | undefined {
   }
 }
 
+function distributedPositions(count: number, minimum: number, maximum: number): number[] {
+  if (count <= 0) return [];
+  if (count === 1) return [(minimum + maximum) / 2];
+  const step = (maximum - minimum) / (count - 1);
+  return Array.from({ length: count }, (_, index) => minimum + step * index);
+}
+
+interface ManagedBranch {
+  id: string;
+  label: string;
+  type: 'server' | 'nas';
+  service?: Service;
+  children: Service[];
+}
+
 function managedFallback(topology: AppConfig['topology'], services: Service[], message?: string): TopologySnapshot {
   const internal = services.filter((service) => service.scope !== 'external');
   const infrastructure = internal.filter((service) => service.runtime === 'infrastructure');
-  const vmHost = infrastructure.find((service) => service.id === topology.vmHostServiceId);
-  const requestedDockerHost = infrastructure.find((service) => service.id === topology.dockerHostServiceId);
-  const dockerHost = requestedDockerHost?.id !== vmHost?.id ? requestedDockerHost : undefined;
-  const vmServices = internal.filter((service) => service.runtime === 'vm');
-  const dockerServices = internal.filter((service) => service.runtime === 'docker');
+  const workloads = internal.filter((service) => service.runtime === 'vm' || service.runtime === 'docker');
+  const infrastructureMap = new Map(infrastructure.map((service) => [service.id, service]));
+  const workloadMap = new Map(workloads.map((service) => [service.id, service]));
+  const assignedHostIds = new Set<string>();
+  const assignedIds = new Set<string>();
+  const branches: ManagedBranch[] = (topology.hosts ?? []).flatMap((host) => {
+    const service = infrastructureMap.get(host.serviceId);
+    if (!service || assignedHostIds.has(service.id)) return [];
+    assignedHostIds.add(service.id);
+    const children = host.serviceIds.flatMap((serviceId) => {
+      const child = workloadMap.get(serviceId);
+      if (!child || assignedIds.has(child.id)) return [];
+      assignedIds.add(child.id);
+      return [child];
+    });
+    return [{
+      id: `managed-host-${service.id}`,
+      label: service.name,
+      type: host.nodeType,
+      service,
+      children,
+    }];
+  });
+  for (const runtime of ['vm', 'docker'] as const) {
+    const children = workloads.filter((service) => service.runtime === runtime && !assignedIds.has(service.id));
+    if (children.length === 0) continue;
+    branches.push({
+      id: `managed-unassigned-${runtime}`,
+      label: runtime === 'vm' ? '未分配虚拟机' : '未分配 Docker 应用',
+      type: 'server',
+      service: undefined,
+      children,
+    });
+  }
+  const branchPositions = distributedPositions(branches.length, 8, 92);
+  const branchWidth = branches.length > 0 ? 84 / branches.length : 84;
   const nodes: TopologyNode[] = [
     { id: 'managed-internet', label: 'Internet', type: 'internet', status: 'up', x: 50, y: 7 },
     {
@@ -71,42 +117,32 @@ function managedFallback(topology: AppConfig['topology'], services: Service[], m
       x: 50,
       y: 24,
     },
-    {
-      id: 'managed-vm-host',
-      label: vmHost?.name || 'VMware ESXi',
-      type: 'server',
-      serviceId: vmHost?.id,
-      ipAddress: serviceHostname(vmHost),
-      x: 27,
-      y: 49,
-    },
-    {
-      id: 'managed-docker-host',
-      label: dockerHost?.name || 'Synology',
-      type: 'nas',
-      serviceId: dockerHost?.id,
-      ipAddress: serviceHostname(dockerHost),
-      x: 73,
-      y: 49,
-    },
-    ...vmServices.map((service, index) => ({
-      id: `managed-service-${service.id}`,
-      label: service.name,
-      type: 'vm' as const,
-      serviceId: service.id,
-      ipAddress: serviceHostname(service),
-      x: 15 + index * 12,
-      y: 80,
-    })),
-    ...dockerServices.map((service, index) => ({
-      id: `managed-service-${service.id}`,
-      label: service.name,
-      type: 'container' as const,
-      serviceId: service.id,
-      ipAddress: serviceHostname(service),
-      x: 58 + index * 8,
-      y: 80,
-    })),
+    ...branches.flatMap((branch, index) => {
+      const x = branchPositions[index];
+      const minimumX = Math.max(4, x - branchWidth * 0.42);
+      const maximumX = Math.min(96, x + branchWidth * 0.42);
+      const childPositions = distributedPositions(branch.children.length, minimumX, maximumX);
+      return [
+        {
+          id: branch.id,
+          label: branch.label,
+          type: branch.type,
+          serviceId: branch.service?.id,
+          ipAddress: serviceHostname(branch.service),
+          x,
+          y: 49,
+        },
+        ...branch.children.map((service, childIndex) => ({
+          id: `managed-service-${service.id}`,
+          label: service.name,
+          type: service.runtime === 'vm' ? 'vm' as const : 'container' as const,
+          serviceId: service.id,
+          ipAddress: serviceHostname(service),
+          x: childPositions[childIndex],
+          y: 80,
+        })),
+      ];
+    }),
   ];
   return {
     requestedSource: topology.source,
@@ -117,10 +153,10 @@ function managedFallback(topology: AppConfig['topology'], services: Service[], m
     nodes,
     links: [
       { source: 'managed-internet', target: 'managed-router', label: 'WAN' },
-      { source: 'managed-router', target: 'managed-vm-host', label: 'LAN' },
-      { source: 'managed-router', target: 'managed-docker-host', label: 'LAN' },
-      ...vmServices.map((service) => ({ source: 'managed-vm-host', target: `managed-service-${service.id}` })),
-      ...dockerServices.map((service) => ({ source: 'managed-docker-host', target: `managed-service-${service.id}` })),
+      ...branches.flatMap((branch) => [
+        { source: 'managed-router', target: branch.id, label: 'LAN' },
+        ...branch.children.map((service) => ({ source: branch.id, target: `managed-service-${service.id}` })),
+      ]),
     ],
   };
 }
@@ -177,10 +213,23 @@ export function TopologyView({ topology, services, health, networkMode }: Topolo
   const nodeMap = useMemo(() => new Map(snapshot.nodes.map((item) => [item.id, item])), [snapshot.nodes]);
   const internetNode = snapshot.nodes.find((node) => node.type === 'internet');
   const routerNode = snapshot.nodes.find((node) => node.type === 'router');
-  const vmHostNode = snapshot.nodes.find((node) => node.type === 'server');
-  const dockerHostNode = snapshot.nodes.find((node) => node.type === 'nas');
   const vmNodes = snapshot.nodes.filter((node) => node.type === 'vm');
   const dockerNodes = snapshot.nodes.filter((node) => node.type === 'container');
+  const workloadNodes = [...vmNodes, ...dockerNodes];
+  const hostNodes = snapshot.nodes.filter((node) => node.type === 'server' || node.type === 'nas');
+  const branches = hostNodes.map((host) => {
+    const linkedIds = new Set(snapshot.links
+      .filter((link) => link.source === host.id)
+      .map((link) => link.target));
+    const linkedWorkloads = workloadNodes.filter((node) => linkedIds.has(node.id));
+    if (linkedWorkloads.length > 0 || snapshot.links.length > 0) {
+      return { host, workloads: linkedWorkloads };
+    }
+    const nearestHost = (node: TopologyNode) => hostNodes.reduce((nearest, candidate) => (
+      Math.abs(candidate.x - node.x) < Math.abs(nearest.x - node.x) ? candidate : nearest
+    ), hostNodes[0]);
+    return { host, workloads: workloadNodes.filter((node) => nearestHost(node)?.id === host.id) };
+  });
   const selectedNode = selectedId ? nodeMap.get(selectedId) : undefined;
   const selectedService = selectedNode?.serviceId ? serviceMap.get(selectedNode.serviceId) : undefined;
   const selectedServiceUrl = selectedService ? getServiceUrl(selectedService, networkMode) : null;
@@ -292,37 +341,30 @@ export function TopologyView({ topology, services, health, networkMode }: Topolo
                 {routerNode && renderNode(routerNode)}
               </div>
 
-              <div className="topology-fork" aria-hidden="true"><span /></div>
-
-              <div className="topology-branches">
-                <section className="topology-branch topology-vm-branch" aria-labelledby="vm-branch-title">
-                  <div className="topology-branch-heading">
-                    <span className="panel-kicker">VIRTUAL MACHINES</span>
-                    <strong id="vm-branch-title">ESXi 虚拟机 <b>{vmNodes.length}</b></strong>
+              {branches.length > 0 ? (
+                <>
+                  <div className="topology-fork" aria-hidden="true"><span /></div>
+                  <div className="topology-branches">
+                    {branches.map(({ host, workloads: branchWorkloads }) => (
+                      <section className="topology-branch" aria-labelledby={`branch-title-${host.id}`} key={host.id}>
+                        <div className="topology-branch-heading">
+                          <span className="panel-kicker">HOST / 宿主</span>
+                          <strong id={`branch-title-${host.id}`}>{host.label} <b>{branchWorkloads.length}</b></strong>
+                        </div>
+                        {renderNode(host)}
+                        <span className="topology-branch-line" aria-hidden="true" />
+                        {branchWorkloads.length > 0 ? (
+                          <div className="topology-leaf-grid">{branchWorkloads.map(renderNode)}</div>
+                        ) : (
+                          <div className="topology-branch-empty">暂无已分配服务</div>
+                        )}
+                      </section>
+                    ))}
                   </div>
-                  {vmHostNode && renderNode(vmHostNode)}
-                  <span className="topology-branch-line" aria-hidden="true" />
-                  {vmNodes.length > 0 ? (
-                    <div className="topology-leaf-grid">{vmNodes.map(renderNode)}</div>
-                  ) : (
-                    <div className="topology-branch-empty">暂无已登记虚拟机</div>
-                  )}
-                </section>
-
-                <section className="topology-branch topology-docker-branch" aria-labelledby="docker-branch-title">
-                  <div className="topology-branch-heading">
-                    <span className="panel-kicker">DOCKER APPLICATIONS</span>
-                    <strong id="docker-branch-title">Synology Docker <b>{dockerNodes.length}</b></strong>
-                  </div>
-                  {dockerHostNode && renderNode(dockerHostNode)}
-                  <span className="topology-branch-line" aria-hidden="true" />
-                  {dockerNodes.length > 0 ? (
-                    <div className="topology-leaf-grid">{dockerNodes.map(renderNode)}</div>
-                  ) : (
-                    <div className="topology-branch-empty">暂无已登记 Docker 应用</div>
-                  )}
-                </section>
-              </div>
+                </>
+              ) : (
+                <div className="topology-branch-empty topology-no-hosts">暂无宿主或可展示的工作负载</div>
+              )}
             </div>
           </div>
         </div>

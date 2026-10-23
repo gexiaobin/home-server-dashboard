@@ -145,9 +145,9 @@ docker compose \
   up -d
 ```
 
-多存储空间或 Docker Socket 覆盖文件可以继续追加为其他 `-f` 参数。启动后先在服务中心把 iStoreOS、fnOS 等条目标记为“ESXi 虚拟机”，把 NAS 中的容器入口标记为“Synology Docker”。再进入“系统设置 > 拓扑数据源”，选择“iKuai v4 API”、设置刷新间隔，并分别选择 VMware ESXi 与 Synology 宿主服务。Token 和路由器地址只存在于服务端部署环境，不进入 PostgreSQL 配置或 JSON 导出。
+多存储空间或 Docker Socket 覆盖文件可以继续追加为其他 `-f` 参数。启动后先在服务中心把工作负载标记为“虚拟机”或“Docker 应用”，把 ESXi、Proxmox、群晖或普通 Linux 宿主标记为“基础设施”。再进入“系统设置 > 拓扑数据源”，选择“iKuai v4 API”、设置刷新间隔，按需添加任意数量的宿主并勾选其工作负载。Token 和路由器地址只存在于服务端部署环境，不进入 PostgreSQL 配置或 JSON 导出。
 
-应用只向四类固定监控端点发送带 Bearer Token 的 `GET` 请求，不跟随重定向，并限制超时和响应大小。iKuai 返回的终端不会直接显示；服务端只保留 Internet、路由器、所选宿主及明确分类的内网 VM/Docker 服务。路由器未配置、Token 无效或 API 暂时不可用时，拓扑页仍使用服务中心数据生成同一双分支结构；概览、服务目录和系统监控仍可正常使用。
+应用只向四类固定监控端点发送带 Bearer Token 的 `GET` 请求，不跟随重定向，并限制超时和响应大小。iKuai 返回的终端不会直接显示；服务端只保留 Internet、路由器、所选宿主及明确分类的内网 VM/Docker 服务。路由器未配置、Token 无效或 API 暂时不可用时，拓扑页仍使用服务中心数据生成配置过的宿主分支；未分配工作负载会显示在通用分支中，概览、服务目录和系统监控仍可正常使用。
 
 ## 8. Docker Socket：默认禁用
 
@@ -221,7 +221,7 @@ docker compose -f docker-compose.yml -f docker-compose.database-file.yml ps
 ### iKuai 拓扑显示回退状态
 
 - 确认页面“系统设置”已选择“iKuai v4 API”并保存。
-- 确认已经选择 VMware ESXi 与 Synology 宿主服务，并给需要显示的内网条目设置正确运行环境。
+- 确认已经添加宿主、分配工作负载，并给需要显示的内网条目设置正确运行环境。
 - 确认部署时加入 `docker-compose.ikuai.yml`，且 `.env` 中 `IKUAI_BASE_URL` 只包含路由器 origin。
 - 确认 `secrets/ikuai_token` 是容器用户可读的普通文件，内容只有一行有效 Token；不要同时设置 `IKUAI_TOKEN` 与 `IKUAI_TOKEN_FILE`。
 - 确认路由器固件支持 v4 监控 API，Token 具有相应读取权限，容器网络可以访问路由器。

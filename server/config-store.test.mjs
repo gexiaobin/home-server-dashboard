@@ -101,8 +101,7 @@ describe('ConfigStore', () => {
       topology: {
         source: 'manual',
         refreshInterval: 15_000,
-        vmHostServiceId: '',
-        dockerHostServiceId: '',
+        hosts: [],
         nodes: [{ type: 'server', x: 50, y: 50, ...config.topology.nodes[0] }],
         links: [],
       },
@@ -329,7 +328,7 @@ describe('ConfigStore', () => {
     })).rejects.toThrow('references an unknown node');
   });
 
-  it('normalizes and validates the optional iKuai topology source', async () => {
+  it('normalizes and validates generic topology hosts', async () => {
     const dataDir = await createTemporaryDirectory();
     const store = new ConfigStore({
       dataDir,
@@ -352,19 +351,37 @@ describe('ConfigStore', () => {
           scope: 'internal',
           runtime: 'infrastructure',
         },
+        {
+          id: 'vm',
+          name: 'Virtual machine',
+          url: 'http://vm.home.arpa',
+          scope: 'internal',
+          runtime: 'vm',
+        },
+        {
+          id: 'app',
+          name: 'Docker app',
+          url: 'http://app.home.arpa',
+          scope: 'internal',
+          runtime: 'docker',
+        },
       ],
       topology: {
         source: 'ikuai',
         refreshInterval: 30_000,
-        vmHostServiceId: '  vmware-esxi  ',
-        dockerHostServiceId: 'synology-dsm',
+        hosts: [
+          { serviceId: '  vmware-esxi  ', nodeType: 'server', serviceIds: [' vm ', 'app'] },
+          { serviceId: 'synology-dsm', nodeType: 'nas', serviceIds: ['app'] },
+        ],
       },
     });
     expect(saved.topology).toMatchObject({
       source: 'ikuai',
       refreshInterval: 30_000,
-      vmHostServiceId: 'vmware-esxi',
-      dockerHostServiceId: 'synology-dsm',
+      hosts: [
+        { serviceId: 'vmware-esxi', nodeType: 'server', serviceIds: ['vm', 'app'] },
+        { serviceId: 'synology-dsm', nodeType: 'nas', serviceIds: [] },
+      ],
       nodes: [],
       links: [],
     });
@@ -373,8 +390,39 @@ describe('ConfigStore', () => {
       .rejects.toThrow('topology.source must be manual or ikuai');
     await expect(store.put({ topology: { refreshInterval: 1_000 } }))
       .rejects.toThrow('topology.refreshInterval must be an integer between 5000 and 300000');
-    await expect(store.put({ topology: { vmHostServiceId: 123 } }))
-      .rejects.toThrow('topology.vmHostServiceId must be a string');
+    await expect(store.put({ topology: { hosts: [{ serviceId: 'host', nodeType: 'desktop' }] } }))
+      .rejects.toThrow('topology.hosts[0].nodeType must be server or nas');
+    await expect(store.put({ topology: { hosts: [{ serviceId: 'host', serviceIds: 'vm' }] } }))
+      .rejects.toThrow('topology.hosts[0].serviceIds must be an array');
+  });
+
+  it('migrates legacy fixed host fields to generic hosts', async () => {
+    const dataDir = await createTemporaryDirectory();
+    const store = new ConfigStore({
+      dataDir,
+      defaultsFile: path.join(dataDir, 'missing-defaults.json'),
+    });
+    const services = [
+      { id: 'hypervisor', name: 'Hypervisor', url: 'https://host.home.arpa', scope: 'internal', runtime: 'infrastructure' },
+      { id: 'container-host', name: 'Container host', url: 'https://apps.home.arpa', scope: 'internal', runtime: 'infrastructure' },
+      { id: 'vm', name: 'Virtual machine', url: 'http://vm.home.arpa', scope: 'internal', runtime: 'vm' },
+      { id: 'app', name: 'Docker app', url: 'http://app.home.arpa', scope: 'internal', runtime: 'docker' },
+    ];
+
+    const saved = await store.put({
+      services,
+      topology: {
+        vmHostServiceId: ' hypervisor ',
+        dockerHostServiceId: 'container-host',
+      },
+    });
+
+    expect(saved.topology.hosts).toEqual([
+      { serviceId: 'hypervisor', nodeType: 'server', serviceIds: ['vm'] },
+      { serviceId: 'container-host', nodeType: 'nas', serviceIds: ['app'] },
+    ]);
+    expect(saved.topology).not.toHaveProperty('vmHostServiceId');
+    expect(saved.topology).not.toHaveProperty('dockerHostServiceId');
   });
 
   it('clears invalid and duplicate topology host associations without rejecting old config', async () => {
@@ -422,21 +470,20 @@ describe('ConfigStore', () => {
       defaultsFile: path.join(dataDir, 'missing-defaults.json'),
     });
 
-    await expect(store.get()).resolves.toMatchObject({
-      topology: { vmHostServiceId: '', dockerHostServiceId: '' },
-    });
+    await expect(store.get()).resolves.toMatchObject({ topology: { hosts: [] } });
 
     const duplicate = await store.put({
       services,
       topology: {
-        vmHostServiceId: 'host',
-        dockerHostServiceId: 'host',
+        hosts: [
+          { serviceId: 'host', nodeType: 'server', serviceIds: ['vm', 'vm', 'bookmark'] },
+          { serviceId: 'host', nodeType: 'nas', serviceIds: ['docker'] },
+        ],
       },
     });
-    expect(duplicate.topology).toMatchObject({
-      vmHostServiceId: 'host',
-      dockerHostServiceId: '',
-    });
+    expect(duplicate.topology.hosts).toEqual([
+      { serviceId: 'host', nodeType: 'server', serviceIds: ['vm'] },
+    ]);
   });
 
   it('never persists deployment addresses or secrets from imported topology config', async () => {
@@ -460,8 +507,7 @@ describe('ConfigStore', () => {
     expect(saved.topology).toEqual({
       source: 'ikuai',
       refreshInterval: 15_000,
-      vmHostServiceId: '',
-      dockerHostServiceId: '',
+      hosts: [],
       nodes: [],
       links: [],
     });

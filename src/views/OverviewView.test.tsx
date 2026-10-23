@@ -12,8 +12,7 @@ const config: AppConfig = {
   topology: {
     source: 'manual',
     refreshInterval: 15_000,
-    vmHostServiceId: '',
-    dockerHostServiceId: '',
+    hosts: [],
     nodes: [],
     links: [],
   },

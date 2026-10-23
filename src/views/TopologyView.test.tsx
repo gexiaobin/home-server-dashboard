@@ -88,8 +88,10 @@ const services: Service[] = [
 const manualTopology: AppConfig['topology'] = {
   source: 'manual',
   refreshInterval: 15_000,
-  vmHostServiceId: 'vmware-esxi',
-  dockerHostServiceId: 'synology-dsm',
+  hosts: [
+    { serviceId: 'vmware-esxi', nodeType: 'server', serviceIds: ['istoreos'] },
+    { serviceId: 'synology-dsm', nodeType: 'nas', serviceIds: ['qinglong'] },
+  ],
   nodes: [],
   links: [],
 };
@@ -300,8 +302,10 @@ describe('TopologyView', () => {
       <TopologyView
         topology={{
           ...manualTopology,
-          vmHostServiceId: 'istoreos',
-          dockerHostServiceId: 'aliyun',
+          hosts: [
+            { serviceId: 'istoreos', nodeType: 'server', serviceIds: ['istoreos'] },
+            { serviceId: 'aliyun', nodeType: 'nas', serviceIds: ['qinglong'] },
+          ],
         }}
         services={services}
         health={[]}
@@ -311,8 +315,8 @@ describe('TopologyView', () => {
 
     await waitFor(() => expect(screen.getByText('服务目录拓扑')).toBeInTheDocument());
     expect(screen.getAllByRole('button', { name: /iStoreOS/ })).toHaveLength(1);
-    expect(screen.getByRole('button', { name: /^VMware ESXi/ })).toBeInTheDocument();
-    expect(screen.getByRole('button', { name: /^Synology/ })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /未分配虚拟机/ })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /未分配 Docker 应用/ })).toBeInTheDocument();
     expect(screen.queryByText('Alibaba Cloud')).not.toBeInTheDocument();
   });
 
@@ -321,7 +325,10 @@ describe('TopologyView', () => {
       <TopologyView
         topology={{
           ...manualTopology,
-          dockerHostServiceId: 'vmware-esxi',
+          hosts: [
+            { serviceId: 'vmware-esxi', nodeType: 'server', serviceIds: ['istoreos'] },
+            { serviceId: 'vmware-esxi', nodeType: 'nas', serviceIds: ['qinglong'] },
+          ],
         }}
         services={services}
         health={[]}
@@ -331,7 +338,7 @@ describe('TopologyView', () => {
 
     await waitFor(() => expect(screen.getByText('服务目录拓扑')).toBeInTheDocument());
     expect(screen.getAllByRole('button', { name: /^VMware ESXi/ })).toHaveLength(1);
-    expect(screen.getByRole('button', { name: /^Synology/ })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /未分配 Docker 应用/ })).toBeInTheDocument();
     expect(container.querySelectorAll('img[src="/api/services/vmware-esxi/icon"]')).toHaveLength(1);
   });
 });

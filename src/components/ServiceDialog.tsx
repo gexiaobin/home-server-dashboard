@@ -226,8 +226,8 @@ export function ServiceDialog({ service, categories, open, saving, onClose, onSa
                   onChange={(event) => setDraft({ ...draft, runtime: event.target.value as Service['runtime'] })}
                 >
                   <option value="infrastructure">基础设施</option>
-                  <option value="vm">ESXi 虚拟机</option>
-                  <option value="docker">Synology Docker</option>
+                  <option value="vm">虚拟机</option>
+                  <option value="docker">Docker 应用</option>
                 </select>
               </label>
             )}

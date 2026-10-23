@@ -96,8 +96,13 @@ iKuai 动态拓扑同样推荐使用 `docker-compose.ikuai.yml`。在 iKuai Web 
   "topology": {
     "source": "ikuai",
     "refreshInterval": 15000,
-    "vmHostServiceId": "vmware-esxi",
-    "dockerHostServiceId": "synology-dsm",
+    "hosts": [
+      {
+        "serviceId": "synology-dsm",
+        "nodeType": "nas",
+        "serviceIds": ["jellyfin", "immich"]
+      }
+    ],
     "nodes": [
       {
         "id": "nas",
@@ -175,14 +180,15 @@ TCP 检查：
 | --- | --- | --- |
 | `source` | `manual` \| `ikuai` | `manual` 仅按服务目录生成结构；`ikuai` 额外从服务端配置的 iKuai v4 API 获取路由状态与宿主详情 |
 | `refreshInterval` | integer | iKuai 拓扑刷新间隔，单位毫秒，允许 `5000` 到 `300000` |
-| `vmHostServiceId` | string | VMware ESXi 宿主对应的内网基础设施服务 ID；为空时显示通用宿主节点 |
-| `dockerHostServiceId` | string | Synology 宿主对应的内网基础设施服务 ID；为空时显示通用宿主节点 |
+| `hosts` | array | 宿主及工作负载关联列表；可配置任意数量的虚拟化平台或 Docker 宿主 |
 | `nodes` | array | 兼容旧版导入的手工节点数据；服务目录拓扑不依赖该数组 |
 | `links` | array | 兼容旧版导入的手工链路数据；服务目录拓扑不依赖该数组 |
 
-拓扑始终按固定语义生成：`Internet -> iKuai -> VMware ESXi -> 内网 VM` 与 `iKuai -> Synology -> 内网 Docker`。叶节点只来自 `scope: internal` 且明确标记为 `runtime: vm/docker` 的服务；外网书签、未分配基础设施和其他 iKuai 终端不会显示。
+`hosts[]` 中每项包含宿主的 `serviceId`、节点样式 `nodeType`（`server` 或 `nas`）和工作负载 ID 数组 `serviceIds`。宿主必须是 `scope: internal`、`runtime: infrastructure` 的服务；工作负载必须是内网的 `runtime: vm/docker` 服务。一个宿主和一个工作负载最多各出现一次，保存时会过滤无效或重复关联。未分配的虚拟机与 Docker 应用不会隐藏，而是分别进入“未分配虚拟机”和“未分配 Docker 应用”分支。
 
-在“系统设置 > 拓扑数据源”选择 iKuai 并保存后，拓扑页会按刷新间隔请求服务端。服务端使用 iKuai 的系统信息、下游设备、在线终端和物理接口补充路由吞吐及所选宿主的详情，不会把 Token 交给浏览器。iKuai 没有配置、Token 失效、接口不可达或响应异常时，页面会标记数据源不可用，并继续根据已登记服务生成相同的固定双分支结构，不会回退到旧版 `topology.nodes` 手工画布。
+拓扑按 `Internet -> iKuai -> 配置的宿主 -> 工作负载` 生成，不限制宿主厂商、平台类型或数量。外网书签、未分配基础设施和其他 iKuai 终端不会显示。
+
+在“系统设置 > 拓扑数据源”选择 iKuai 并保存后，拓扑页会按刷新间隔请求服务端。服务端使用 iKuai 的系统信息、下游设备、在线终端和物理接口补充路由吞吐及所选宿主的详情，不会把 Token 交给浏览器。iKuai 没有配置、Token 失效、接口不可达或响应异常时，页面会标记数据源不可用，并继续根据已登记服务生成相同的宿主结构，不会回退到旧版 `topology.nodes` 手工画布。
 
 动态模式需要运行容器能够访问路由器地址。路由器固件必须提供 v4 监控 API；菜单名称和返回字段可能随版本变化。不要在 `IKUAI_BASE_URL` 中嵌入账号或 Token，也不要把 Token 填入页面配置。
 
@@ -209,7 +215,7 @@ TCP 检查：
 
 ## 数据迁移
 
-从旧版本升级时，不需要修改 PostgreSQL 表结构，也不需要执行 SQL 迁移。配置仍保存在同一个 JSONB 文档中；应用读取旧服务时会补充 `scope: internal`、`runtime: infrastructure` 和空的 `externalUrl`。保守的 `infrastructure` 默认值可避免升级后把所有旧服务误当成 VM 或 Docker。部署完成后，在服务编辑页为实际的 iStoreOS、fnOS 等虚拟机选择“ESXi 虚拟机”，为 Synology 容器应用选择“Synology Docker”，并在系统设置中关联两个宿主服务。
+从旧版本升级时，不需要修改 PostgreSQL 表结构，也不需要执行 SQL 迁移。配置仍保存在同一个 JSONB 文档中；旧的 `vmHostServiceId` 与 `dockerHostServiceId` 会自动转换为 `hosts[]`，原先所有虚拟机和 Docker 应用分别归入对应宿主，后续保存不再写入旧字段。应用读取旧服务时也会补充 `scope: internal`、`runtime: infrastructure` 和空的 `externalUrl`。保守的 `infrastructure` 默认值可避免升级后把所有旧服务误当成 VM 或 Docker。部署完成后，可在服务编辑页调整运行环境，并在系统设置中添加、删除宿主或重新分配工作负载。
 
 从旧版文件存储升级时，保留 `data/config.json` 并连接到空数据库。应用首次初始化表时会校验并导入该文件；表已有记录时不会覆盖数据库。确认导入成功后继续保留 JSON 备份，直到完成数据库备份验证。
 

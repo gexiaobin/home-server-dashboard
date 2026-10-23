@@ -17,8 +17,7 @@ const config: AppConfig = {
   topology: {
     source: 'manual',
     refreshInterval: 15_000,
-    vmHostServiceId: '',
-    dockerHostServiceId: '',
+    hosts: [],
     nodes: [],
     links: [],
   },
@@ -101,7 +100,7 @@ describe('SettingsView', () => {
     }));
   });
 
-  it('offers only internal infrastructure services and prevents duplicate hosts', async () => {
+  it('adds multiple generic hosts and assigns each workload to at most one host', async () => {
     const onSave = vi.fn(async () => undefined);
     render(
       <SettingsView
@@ -111,25 +110,30 @@ describe('SettingsView', () => {
       />,
     );
 
-    const vmHostSelect = screen.getByRole('combobox', { name: 'VMware ESXi 宿主服务' }) as HTMLSelectElement;
-    const dockerHostSelect = screen.getByRole('combobox', { name: 'Synology Docker 宿主服务' }) as HTMLSelectElement;
-    expect(Array.from(vmHostSelect.options).map((option) => option.value)).toEqual([
-      '',
-      'esxi',
-      'synology',
-    ]);
+    const addHost = screen.getByRole('button', { name: '添加宿主' });
+    fireEvent.click(addHost);
+    fireEvent.click(addHost);
 
-    fireEvent.change(vmHostSelect, { target: { value: 'esxi' } });
-    expect(Array.from(dockerHostSelect.options).find((option) => option.value === 'esxi')).toBeDisabled();
-    fireEvent.change(dockerHostSelect, { target: { value: 'synology' } });
+    const firstHostSelect = screen.getByRole('combobox', { name: '宿主 1 关联服务' }) as HTMLSelectElement;
+    const secondHostSelect = screen.getByRole('combobox', { name: '宿主 2 关联服务' }) as HTMLSelectElement;
+    expect(Array.from(firstHostSelect.options).map((option) => option.value)).toEqual(['esxi', 'synology']);
+    expect(Array.from(firstHostSelect.options).find((option) => option.value === 'synology')).toBeDisabled();
+    expect(Array.from(secondHostSelect.options).find((option) => option.value === 'esxi')).toBeDisabled();
+    expect(screen.getByRole('button', { name: '添加宿主' })).toBeDisabled();
+
+    fireEvent.change(screen.getByRole('combobox', { name: '宿主 2 节点样式' }), { target: { value: 'nas' } });
+    fireEvent.click(screen.getAllByRole('checkbox', { name: /iStoreOS/ })[0]);
+    fireEvent.click(screen.getAllByRole('checkbox', { name: /Immich/ })[1]);
     fireEvent.click(screen.getByRole('button', { name: '保存拓扑设置' }));
 
     await waitFor(() => expect(onSave).toHaveBeenCalledWith({
       ...hostSelectionConfig,
       topology: {
         ...hostSelectionConfig.topology,
-        vmHostServiceId: 'esxi',
-        dockerHostServiceId: 'synology',
+        hosts: [
+          { serviceId: 'esxi', nodeType: 'server', serviceIds: ['vm'] },
+          { serviceId: 'synology', nodeType: 'nas', serviceIds: ['docker'] },
+        ],
       },
     }));
   });

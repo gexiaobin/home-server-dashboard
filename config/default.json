@@ -88,8 +88,18 @@
   "topology": {
     "source": "manual",
     "refreshInterval": 15000,
-    "vmHostServiceId": "vmware-esxi",
-    "dockerHostServiceId": "synology-dsm",
+    "hosts": [
+      {
+        "serviceId": "vmware-esxi",
+        "nodeType": "server",
+        "serviceIds": ["home-assistant"]
+      },
+      {
+        "serviceId": "synology-dsm",
+        "nodeType": "nas",
+        "serviceIds": ["jellyfin", "immich", "adguard"]
+      }
+    ],
     "nodes": [
       { "id": "internet", "label": "Internet", "type": "internet", "x": 50, "y": 8 },
       { "id": "gateway", "label": "主路由", "type": "router", "x": 50, "y": 29 },

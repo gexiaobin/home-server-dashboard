@@ -58,6 +58,12 @@ export interface TopologyLink {
   label?: string;
 }
 
+export interface TopologyHost {
+  serviceId: string;
+  nodeType: 'server' | 'nas';
+  serviceIds: string[];
+}
+
 export interface AppConfig {
   settings: {
     title: string;
@@ -69,8 +75,7 @@ export interface AppConfig {
   topology: {
     source: 'manual' | 'ikuai';
     refreshInterval: number;
-    vmHostServiceId: string;
-    dockerHostServiceId: string;
+    hosts: TopologyHost[];
     nodes: TopologyNode[];
     links: TopologyLink[];
   };

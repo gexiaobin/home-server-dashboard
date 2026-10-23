@@ -19,8 +19,8 @@ type HealthFilter = 'all' | ServiceStatus;
 
 const runtimeLabels: Record<Service['runtime'], string> = {
   infrastructure: '基础设施',
-  vm: 'ESXi 虚拟机',
-  docker: 'Synology Docker',
+  vm: '虚拟机',
+  docker: 'Docker 应用',
 };
 
 function formatCheckedAt(checkedAt?: string | null): string {

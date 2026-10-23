@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
-import { Download, FileJson, Network, Save, ShieldCheck, Upload } from 'lucide-react';
-import type { AppConfig } from '../types';
+import { Download, FileJson, Network, Plus, Save, ShieldCheck, Trash2, Upload } from 'lucide-react';
+import type { AppConfig, TopologyHost } from '../types';
 
 interface SettingsViewProps {
   config: AppConfig;
@@ -14,8 +14,7 @@ export function SettingsView({ config, detectedHostname, saving, onSave }: Setti
   const [topologyDraft, setTopologyDraft] = useState({
     source: config.topology.source,
     refreshInterval: config.topology.refreshInterval,
-    vmHostServiceId: config.topology.vmHostServiceId,
-    dockerHostServiceId: config.topology.dockerHostServiceId,
+    hosts: structuredClone(config.topology.hosts ?? []),
   });
   const [importError, setImportError] = useState('');
   const fileRef = useRef<HTMLInputElement>(null);
@@ -25,15 +24,13 @@ export function SettingsView({ config, detectedHostname, saving, onSave }: Setti
     setTopologyDraft({
       source: config.topology.source,
       refreshInterval: config.topology.refreshInterval,
-      vmHostServiceId: config.topology.vmHostServiceId,
-      dockerHostServiceId: config.topology.dockerHostServiceId,
+      hosts: structuredClone(config.topology.hosts ?? []),
     });
   }, [
     config.settings,
     config.topology.source,
     config.topology.refreshInterval,
-    config.topology.vmHostServiceId,
-    config.topology.dockerHostServiceId,
+    config.topology.hosts,
   ]);
 
   async function saveGeneral(event: React.FormEvent) {
@@ -79,8 +76,7 @@ export function SettingsView({ config, detectedHostname, saving, onSave }: Setti
       setTopologyDraft({
         source: parsed.topology.source || 'manual',
         refreshInterval: parsed.topology.refreshInterval || 15_000,
-        vmHostServiceId: parsed.topology.vmHostServiceId || '',
-        dockerHostServiceId: parsed.topology.dockerHostServiceId || '',
+        hosts: Array.isArray(parsed.topology.hosts) ? structuredClone(parsed.topology.hosts) : [],
       });
       setImportError('');
     } catch (error) {
@@ -93,6 +89,54 @@ export function SettingsView({ config, detectedHostname, saving, onSave }: Setti
   const hostServices = config.services.filter((service) => (
     service.scope === 'internal' && service.runtime === 'infrastructure'
   ));
+  const workloadServices = config.services.filter((service) => (
+    service.scope === 'internal' && (service.runtime === 'vm' || service.runtime === 'docker')
+  ));
+  const selectedHostServiceIds = new Set(topologyDraft.hosts.map((host) => host.serviceId));
+  const availableHostServices = hostServices.filter((service) => !selectedHostServiceIds.has(service.id));
+  const assignedServiceIds = new Set(topologyDraft.hosts.flatMap((host) => host.serviceIds));
+  const unassignedWorkloadCount = workloadServices.filter((service) => !assignedServiceIds.has(service.id)).length;
+
+  function addHost() {
+    const service = availableHostServices[0];
+    if (!service) return;
+    setTopologyDraft({
+      ...topologyDraft,
+      hosts: [...topologyDraft.hosts, { serviceId: service.id, nodeType: 'server', serviceIds: [] }],
+    });
+  }
+
+  function updateHost(index: number, patch: Partial<TopologyHost>) {
+    setTopologyDraft({
+      ...topologyDraft,
+      hosts: topologyDraft.hosts.map((host, hostIndex) => (
+        hostIndex === index ? { ...host, ...patch } : host
+      )),
+    });
+  }
+
+  function removeHost(index: number) {
+    setTopologyDraft({
+      ...topologyDraft,
+      hosts: topologyDraft.hosts.filter((_, hostIndex) => hostIndex !== index),
+    });
+  }
+
+  function assignService(hostIndex: number, serviceId: string, checked: boolean) {
+    setTopologyDraft({
+      ...topologyDraft,
+      hosts: topologyDraft.hosts.map((host, index) => ({
+        ...host,
+        serviceIds: checked
+          ? index === hostIndex
+            ? [...host.serviceIds.filter((id) => id !== serviceId), serviceId]
+            : host.serviceIds.filter((id) => id !== serviceId)
+          : index === hostIndex
+            ? host.serviceIds.filter((id) => id !== serviceId)
+            : host.serviceIds,
+      })),
+    });
+  }
 
   return (
     <div className="settings-view">
@@ -139,7 +183,7 @@ export function SettingsView({ config, detectedHostname, saving, onSave }: Setti
         <div className="settings-section-copy">
           <span className="panel-kicker">NETWORK MAP</span>
           <h2>拓扑数据源</h2>
-          <p>配置 iKuai 实时数据源，以及 VMware 与 Synology 两个基础设施宿主。</p>
+          <p>配置实时数据源，并按实际环境添加任意数量的虚拟化、容器或通用宿主。</p>
         </div>
         <form className="settings-form" onSubmit={saveTopology}>
           <label className="field">
@@ -173,63 +217,106 @@ export function SettingsView({ config, detectedHostname, saving, onSave }: Setti
               <option value={60_000}>1 分钟</option>
             </select>
           </label>
-          <label className="field">
-            <span>VMware ESXi 宿主</span>
-            <select
-              aria-label="VMware ESXi 宿主服务"
-              value={topologyDraft.vmHostServiceId}
-              onChange={(event) => setTopologyDraft({
-                ...topologyDraft,
-                vmHostServiceId: event.target.value,
-                dockerHostServiceId: event.target.value === topologyDraft.dockerHostServiceId
-                  ? ''
-                  : topologyDraft.dockerHostServiceId,
-              })}
-            >
-              <option value="">未关联服务</option>
-              {hostServices.map((service) => (
-                <option
-                  key={service.id}
-                  value={service.id}
-                  disabled={service.id === topologyDraft.dockerHostServiceId}
-                >
-                  {service.name}
-                </option>
-              ))}
-            </select>
-          </label>
-          <label className="field">
-            <span>Synology Docker 宿主</span>
-            <select
-              aria-label="Synology Docker 宿主服务"
-              value={topologyDraft.dockerHostServiceId}
-              onChange={(event) => setTopologyDraft({
-                ...topologyDraft,
-                vmHostServiceId: event.target.value === topologyDraft.vmHostServiceId
-                  ? ''
-                  : topologyDraft.vmHostServiceId,
-                dockerHostServiceId: event.target.value,
-              })}
-            >
-              <option value="">未关联服务</option>
-              {hostServices.map((service) => (
-                <option
-                  key={service.id}
-                  value={service.id}
-                  disabled={service.id === topologyDraft.vmHostServiceId}
-                >
-                  {service.name}
-                </option>
-              ))}
-            </select>
-          </label>
+          <div className="topology-host-manager settings-field-wide">
+            <div className="topology-host-manager-header">
+              <div>
+                <strong>宿主与工作负载</strong>
+                <span>{topologyDraft.hosts.length} 个宿主 · {unassignedWorkloadCount} 个服务未分配</span>
+              </div>
+              <button
+                className="button button-secondary"
+                type="button"
+                disabled={availableHostServices.length === 0}
+                onClick={addHost}
+              >
+                <Plus size={15} /> 添加宿主
+              </button>
+            </div>
+            {topologyDraft.hosts.length === 0 ? (
+              <div className="topology-host-empty">
+                {hostServices.length > 0
+                  ? '尚未配置宿主。未分配的虚拟机和 Docker 应用仍会显示在通用分支中。'
+                  : '请先在服务中心添加运行环境为“基础设施”的内网服务。'}
+              </div>
+            ) : (
+              <div className="topology-host-list">
+                {topologyDraft.hosts.map((host, index) => {
+                  const selectedService = hostServices.find((service) => service.id === host.serviceId);
+                  return (
+                    <fieldset className="topology-host-editor" key={host.serviceId}>
+                      <legend>宿主 {index + 1}</legend>
+                      <div className="topology-host-fields">
+                        <label className="field">
+                          <span>关联服务</span>
+                          <select
+                            aria-label={`宿主 ${index + 1} 关联服务`}
+                            value={host.serviceId}
+                            onChange={(event) => updateHost(index, { serviceId: event.target.value })}
+                          >
+                            {hostServices.map((service) => (
+                              <option
+                                key={service.id}
+                                value={service.id}
+                                disabled={service.id !== host.serviceId && selectedHostServiceIds.has(service.id)}
+                              >
+                                {service.name}
+                              </option>
+                            ))}
+                          </select>
+                        </label>
+                        <label className="field">
+                          <span>节点样式</span>
+                          <select
+                            aria-label={`宿主 ${index + 1} 节点样式`}
+                            value={host.nodeType}
+                            onChange={(event) => updateHost(index, { nodeType: event.target.value as TopologyHost['nodeType'] })}
+                          >
+                            <option value="server">服务器</option>
+                            <option value="nas">NAS</option>
+                          </select>
+                        </label>
+                        <button
+                          className="icon-button subtle topology-host-remove"
+                          type="button"
+                          aria-label={`删除宿主 ${selectedService?.name || index + 1}`}
+                          title="删除宿主"
+                          onClick={() => removeHost(index)}
+                        >
+                          <Trash2 size={15} />
+                        </button>
+                      </div>
+                      <div className="topology-workload-picker">
+                        <span>承载服务</span>
+                        {workloadServices.length > 0 ? (
+                          <div className="topology-workload-grid">
+                            {workloadServices.map((service) => (
+                              <label key={service.id}>
+                                <input
+                                  type="checkbox"
+                                  checked={host.serviceIds.includes(service.id)}
+                                  onChange={(event) => assignService(index, service.id, event.target.checked)}
+                                />
+                                <span>{service.name}<small>{service.runtime === 'vm' ? '虚拟机' : 'Docker 应用'}</small></span>
+                              </label>
+                            ))}
+                          </div>
+                        ) : (
+                          <small>服务中心暂无虚拟机或 Docker 应用。</small>
+                        )}
+                      </div>
+                    </fieldset>
+                  );
+                })}
+              </div>
+            )}
+          </div>
           <div className="config-summary settings-field-wide">
             <Network size={22} />
             <div>
               <strong>{topologyDraft.source === 'ikuai' ? 'iKuai API Token' : '服务目录拓扑'}</strong>
               <span>{topologyDraft.source === 'ikuai'
                 ? '路由器地址与 Token 仅从服务端部署环境读取，不进入配置导出。'
-                : '拓扑节点由服务中心的运行位置自动生成。'}</span>
+                : '拓扑节点由宿主关联与服务分配自动生成。'}</span>
             </div>
           </div>
           <button className="button button-primary settings-save" type="submit" disabled={saving}>

@@ -14,8 +14,7 @@ export const DEFAULT_CONFIG = Object.freeze({
   topology: Object.freeze({
     source: 'manual',
     refreshInterval: 15_000,
-    vmHostServiceId: '',
-    dockerHostServiceId: '',
+    hosts: Object.freeze([]),
     nodes: Object.freeze([]),
     links: Object.freeze([]),
   }),
@@ -182,6 +181,28 @@ export function validateConfig(config) {
         throw new ConfigValidationError(`topology.${field} must be a string`);
       }
     }
+    if (config.topology.hosts !== undefined) {
+      if (!Array.isArray(config.topology.hosts)) {
+        throw new ConfigValidationError('topology.hosts must be an array');
+      }
+      for (const [index, host] of config.topology.hosts.entries()) {
+        if (!isObject(host)) {
+          throw new ConfigValidationError(`topology.hosts[${index}] must be an object`);
+        }
+        requireString(host.serviceId, `topology.hosts[${index}].serviceId`);
+        if (host.nodeType !== undefined && !['server', 'nas'].includes(host.nodeType)) {
+          throw new ConfigValidationError(`topology.hosts[${index}].nodeType must be server or nas`);
+        }
+        if (host.serviceIds !== undefined) {
+          if (!Array.isArray(host.serviceIds)) {
+            throw new ConfigValidationError(`topology.hosts[${index}].serviceIds must be an array`);
+          }
+          for (const [serviceIndex, serviceId] of host.serviceIds.entries()) {
+            requireString(serviceId, `topology.hosts[${index}].serviceIds[${serviceIndex}]`);
+          }
+        }
+      }
+    }
     const nodeIds = new Set();
     for (const [index, node] of (config.topology.nodes ?? []).entries()) {
       if (!isObject(node)) {
@@ -259,19 +280,58 @@ export function normalizeConfig(defaults, config) {
   const hostServiceIds = new Set(services
     .filter((service) => service.scope === 'internal' && service.runtime === 'infrastructure')
     .map((service) => service.id));
-  const requestedVmHostServiceId = (topologyConfig.vmHostServiceId
-    ?? topologyDefaults.vmHostServiceId
-    ?? '').trim();
-  const requestedDockerHostServiceId = (topologyConfig.dockerHostServiceId
-    ?? topologyDefaults.dockerHostServiceId
-    ?? '').trim();
-  const vmHostServiceId = hostServiceIds.has(requestedVmHostServiceId)
-    ? requestedVmHostServiceId
-    : '';
-  const dockerHostServiceId = hostServiceIds.has(requestedDockerHostServiceId)
-    && requestedDockerHostServiceId !== vmHostServiceId
-    ? requestedDockerHostServiceId
-    : '';
+  const workloadServices = services.filter((service) => (
+    service.scope === 'internal' && ['vm', 'docker'].includes(service.runtime)
+  ));
+  const workloadServiceIds = new Set(workloadServices.map((service) => service.id));
+  const legacyHosts = (source) => {
+    const vmHostServiceId = typeof source.vmHostServiceId === 'string'
+      ? source.vmHostServiceId.trim()
+      : '';
+    const dockerHostServiceId = typeof source.dockerHostServiceId === 'string'
+      ? source.dockerHostServiceId.trim()
+      : '';
+    return [
+      ...(vmHostServiceId ? [{
+        serviceId: vmHostServiceId,
+        nodeType: 'server',
+        serviceIds: workloadServices.filter((service) => service.runtime === 'vm').map((service) => service.id),
+      }] : []),
+      ...(dockerHostServiceId && dockerHostServiceId !== vmHostServiceId ? [{
+        serviceId: dockerHostServiceId,
+        nodeType: 'nas',
+        serviceIds: workloadServices.filter((service) => service.runtime === 'docker').map((service) => service.id),
+      }] : []),
+    ];
+  };
+  const hasLegacyHostFields = topologyConfig.vmHostServiceId !== undefined
+    || topologyConfig.dockerHostServiceId !== undefined;
+  const requestedHosts = Array.isArray(topologyConfig.hosts)
+    ? topologyConfig.hosts
+    : hasLegacyHostFields
+      ? legacyHosts(topologyConfig)
+      : Array.isArray(topologyDefaults.hosts)
+        ? topologyDefaults.hosts
+        : legacyHosts(topologyDefaults);
+  const claimedHostServiceIds = new Set();
+  const claimedWorkloadServiceIds = new Set();
+  const hosts = clone(requestedHosts).flatMap((host) => {
+    const serviceId = typeof host?.serviceId === 'string' ? host.serviceId.trim() : '';
+    if (!hostServiceIds.has(serviceId) || claimedHostServiceIds.has(serviceId)) return [];
+    claimedHostServiceIds.add(serviceId);
+    const serviceIds = (Array.isArray(host.serviceIds) ? host.serviceIds : [])
+      .map((id) => typeof id === 'string' ? id.trim() : '')
+      .filter((id) => {
+        if (!workloadServiceIds.has(id) || claimedWorkloadServiceIds.has(id)) return false;
+        claimedWorkloadServiceIds.add(id);
+        return true;
+      });
+    return [{
+      serviceId,
+      nodeType: ['server', 'nas'].includes(host.nodeType) ? host.nodeType : 'server',
+      serviceIds,
+    }];
+  });
   return {
     ...clone(defaults),
     ...clone(config),
@@ -286,8 +346,7 @@ export function normalizeConfig(defaults, config) {
       refreshInterval: topologyConfig.refreshInterval
         ?? topologyDefaults.refreshInterval
         ?? 15_000,
-      vmHostServiceId,
-      dockerHostServiceId,
+      hosts,
       nodes: clone(topologyConfig.nodes ?? topologyDefaults.nodes ?? []).map((node) => ({
         type: 'server',
         x: 50,

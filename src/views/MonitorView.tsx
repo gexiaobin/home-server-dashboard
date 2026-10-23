@@ -32,7 +32,7 @@ interface MonitorViewProps {
   connected?: boolean;
 }
 
-type Tone = 'accent' | 'cyan' | 'amber' | 'red';
+type Tone = 'accent' | 'cyan' | 'red';
 
 interface MetricCardProps {
   label: string;
@@ -262,7 +262,7 @@ export function MonitorView({ overview, history, connected = true }: MonitorView
           detail={overview.disks.length ? `${overview.disks.length} 个存储空间 · ${formatBytes(storage.used)} / ${formatBytes(storage.total)}` : '未挂载存储卷'}
           percent={storagePercent}
           icon={HardDrive}
-          tone="amber"
+          tone="accent"
           status={overview.disks.length ? metricStatus(storagePercent, 80, 92) : '未采集'}
           secondaryLabel="剩余可用"
           secondaryValue={overview.disks.length ? formatBytes(Math.max(0, storage.total - storage.used)) : '不可用'}
@@ -381,7 +381,7 @@ export function MonitorView({ overview, history, connected = true }: MonitorView
                     <strong>{Math.round(disk.percent)}%</strong>
                     <span>{formatBytes(disk.used)} / {formatBytes(disk.total)}</span>
                   </div>
-                  <Meter value={disk.percent} tone="amber" label={`${diskLabel(disk.mount, index)}使用率`} />
+                  <Meter value={disk.percent} tone="accent" label={`${diskLabel(disk.mount, index)}使用率`} />
                   <span className="storage-free">可用 {formatBytes(Math.max(0, disk.total - disk.used))}</span>
                 </article>
               ))}
@@ -414,7 +414,7 @@ export function MonitorView({ overview, history, connected = true }: MonitorView
                   formatter={(value: number, name: string) => [`${value.toFixed(2)} MiB/s`, name === 'rx' ? '下载' : '上传']}
                 />
                 <Area type="monotone" dataKey="rx" stroke="#47d9e6" fill="#47d9e619" strokeWidth={2} isAnimationActive={false} />
-                <Area type="monotone" dataKey="tx" stroke="#ffba4a" fill="#ffba4a0d" strokeWidth={2} isAnimationActive={false} />
+                <Area type="monotone" dataKey="tx" stroke="#d7ff43" fill="#d7ff430d" strokeWidth={2} isAnimationActive={false} />
               </AreaChart>
             </ResponsiveContainer>
           </div>
