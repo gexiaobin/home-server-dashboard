@@ -342,6 +342,35 @@ describe('TopologyView', () => {
     expect(screen.getAllByRole('button', { name: /iStoreOS/ })).toHaveLength(1);
   });
 
+  it('wraps a large Docker workload into a bounded application grid', async () => {
+    const dockerServices = Array.from({ length: 6 }, (_, index): Service => ({
+      ...services[3],
+      id: `docker-${index + 1}`,
+      name: `Docker ${index + 1}`,
+      url: `http://192.0.2.8:${9000 + index}`,
+    }));
+
+    const { container } = render(
+      <TopologyView
+        topology={{
+          ...manualTopology,
+          hosts: [{
+            serviceId: 'synology-dsm',
+            nodeType: 'nas',
+            serviceIds: dockerServices.map((service) => service.id),
+          }],
+        }}
+        services={[...services.slice(0, 3), ...dockerServices]}
+        health={[]}
+        networkMode="internal"
+      />,
+    );
+
+    await waitFor(() => expect(screen.getByText('DOCKER / 6 个应用')).toBeInTheDocument());
+    expect(container.querySelector('.topology-children.is-container-grid.columns-3')).toBeInTheDocument();
+    expect(screen.getAllByRole('button', { name: /Docker \d/ })).toHaveLength(6);
+  });
+
   it('does not attach a duplicated host service to both branches', async () => {
     const { container } = render(
       <TopologyView

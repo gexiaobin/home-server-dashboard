@@ -341,16 +341,26 @@ export function TopologyView({ topology, services, health, networkMode }: Topolo
     tree.children.reduce((total, child) => total + 1 + descendantCount(child), 0)
   );
 
-  const renderTree = (tree: TopologyTree) => (
-    <div className="topology-subtree" key={tree.node.id}>
-      {renderNode(tree.node)}
-      {tree.children.length > 0 && (
-        <div className="topology-children">
-          {tree.children.map(renderTree)}
-        </div>
-      )}
-    </div>
-  );
+  const renderTree = (tree: TopologyTree) => {
+    const isContainerGrid = tree.children.length > 0 && tree.children.every((child) => (
+      child.node.type === 'container' && child.children.length === 0
+    ));
+    const containerColumns = tree.children.length === 4 ? 2 : Math.min(tree.children.length, 3);
+
+    return (
+      <div className="topology-subtree" key={tree.node.id}>
+        {renderNode(tree.node)}
+        {tree.children.length > 0 && (
+          <div className={`topology-children${isContainerGrid ? ` is-container-grid columns-${containerColumns}` : ''}`}>
+            {isContainerGrid && (
+              <span className="topology-child-group-label">DOCKER / {tree.children.length} 个应用</span>
+            )}
+            {tree.children.map(renderTree)}
+          </div>
+        )}
+      </div>
+    );
+  };
 
   return (
     <div className="topology-view">
