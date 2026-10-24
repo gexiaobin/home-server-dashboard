@@ -1,19 +1,57 @@
 # Home Server Dashboard
 
-面向家庭服务器的自托管控制台，用一个页面维护虚拟机、NAS 与 Docker 应用入口，并查看主机硬件、网络、服务状态和拓扑。界面参考 Grafana 的高密度运维体验，但项目本身保持轻量：React 前端与 Express API 打包在同一个容器中。
+[![Container image](https://github.com/gexiaobin/home-server-dashboard/actions/workflows/container-image.yml/badge.svg)](https://github.com/gexiaobin/home-server-dashboard/actions/workflows/container-image.yml)
+[![GHCR](https://img.shields.io/badge/GHCR-amd64%20%7C%20arm64-2496ED?logo=docker&logoColor=white)](https://github.com/gexiaobin/home-server-dashboard/pkgs/container/home-server-dashboard)
+[![License: MIT](https://img.shields.io/badge/License-MIT-2ea44f.svg)](LICENSE)
 
-## 功能
+面向家庭服务器与 HomeLab 的自托管控制台。集中维护 NAS、虚拟机、Docker 应用和公网书签，并在同一个界面查看主机资源、服务状态、网络流量与多级拓扑。
 
-- 控制中心概览：汇总常用服务、主机资源、异常服务、网络速率与容器可见状态。
-- 服务导航：将内网服务与阿里云、京东云等外网书签分区维护；内网服务可在内外网入口之间切换。
-- 真实服务图标：由服务端根据每个条目的 `url` 解析目标页面声明的 favicon，包括页面明确引用的公网 HTTPS CDN 图标，加载失败时自动回退。
-- 状态检查：支持 HTTP、TCP 和不探测三种模式。
-- 主机概览：CPU、内存、磁盘、网络与温度指标。
-- 网络拓扑：按配置生成 `Internet -> iKuai -> 任意深度的宿主与工作负载`，支持 ESXi、Proxmox 等虚拟化平台，也支持 fnOS、iStoreOS 等 VM 继续承载 Docker 应用。
-- PostgreSQL 持久化：页面修改通过原子 JSONB upsert 保存，容器升级后继续保留。
-- 群晖友好：提供 Container Manager Compose、多架构 GHCR 镜像和部署说明。
+项目采用 React + Express，前端和 API 打包在一个轻量容器中。所有页面内容均可在系统设置中维护，不绑定 ESXi、Synology 或任何特定厂商；其他用户拉取仓库后，可以直接替换成自己的主机、虚拟化平台和服务。
 
-## 架构
+[快速部署](#docker-快速启动) · [拓扑模型](#通用网络拓扑) · [配置说明](docs/configuration.md) · [群晖部署](docs/synology.md) · [安全说明](#安全说明)
+
+## 页面与能力
+
+| 页面 | 主要能力 |
+| --- | --- |
+| 概览 | 常用服务、外网书签、主机资源、运行关注、实时网络与容器摘要 |
+| 服务中心 | 维护内网服务与外网书签；支持内外网地址切换、分类、收藏、描述和运行环境 |
+| 系统监控 | CPU、内存、负载、存储、温度、网络速率、运行时间和 Docker 容器状态 |
+| 网络拓扑 | 从服务配置递归生成宿主、虚拟机和 Docker 应用关系；可叠加 iKuai 实时数据 |
+| 系统设置 | 修改站点信息、服务目录、拓扑数据源与宿主关系，并导入或导出 JSON 配置 |
+
+## 核心特性
+
+- **通用服务目录**：内网服务和公网书签分别管理；内网条目可配置独立的 `url` 与 `externalUrl`。
+- **真实应用图标**：服务端发现目标页面声明的 favicon，支持受限重定向、公网 HTTPS CDN 图标、自定义 `iconUrl` 和安全回退。
+- **服务健康检查**：每个内网服务可选择 HTTP、TCP 或不探测；外网书签不会进入家庭内网健康统计。
+- **宿主硬件监控**：通过只读挂载读取 CPU、内存、磁盘、网络、温度与运行时间，无需在宿主安装 Agent。
+- **通用多级拓扑**：宿主和工作负载来自用户配置，不硬编码厂商；虚拟机还可继续作为 Docker 宿主。
+- **响应式应用分组**：同一宿主的 Docker 应用集中显示，桌面端最多三列，移动端自动切换为单列，应用增加时不会无限撑宽画布。
+- **可选动态数据源**：接入 iKuai v4 API 后补充路由器状态、实时吞吐、在线终端和宿主详情；不可用时自动保留配置拓扑。
+- **数据库持久化**：页面修改通过原子 JSONB upsert 保存到 PostgreSQL，容器升级和重建不会丢失。
+- **适配群晖部署**：提供 DSM Container Manager 指南、Compose 覆盖文件，以及 `linux/amd64`、`linux/arm64` 的 GHCR 镜像。
+
+## 通用网络拓扑
+
+拓扑关系由“系统设置 > 拓扑数据源”维护。基础设施和虚拟机都可以成为宿主，Docker 应用与虚拟机可以分配给任意直接宿主，因此既能表达普通虚拟化结构，也能表达虚拟机中继续运行容器的场景：
+
+```text
+Internet
+└── Router / iKuai
+    ├── ESXi / Proxmox / Hyper-V
+    │   ├── fnOS
+    │   │   └── Docker applications
+    │   └── iStoreOS
+    │       └── Docker applications
+    ├── Synology / TrueNAS / Linux server
+    │   └── Docker applications
+    └── Other user-defined hosts
+```
+
+每个工作负载最多属于一个直接宿主，前端和服务端都会过滤重复、自关联与循环关系。未分配的虚拟机或 Docker 应用仍会进入独立分支，不会从拓扑中消失。宿主数量、厂商和嵌套深度不设固定限制。
+
+## 系统架构
 
 ```text
 Browser
@@ -28,6 +66,8 @@ Express :3000  ----  PostgreSQL / JSONB
   `---- Docker socket    (disabled by default)
 ```
 
+默认部署只需要一个应用容器和一个可访问的 PostgreSQL 数据库。主机指标挂载、iKuai API 与 Docker Socket 都是独立能力；不需要时可以保持关闭或删除对应挂载。
+
 ## 内外网导航
 
 内网服务使用 `url` 配置内网地址，并可使用 `externalUrl` 配置互联网地址。页面顶栏的“内网 / 外网”开关会统一切换概览、服务目录和网络拓扑中的打开链接；外网地址未配置时，对应入口会显示为不可用，不会回退到可能无法访问的内网地址。
@@ -38,31 +78,15 @@ Express :3000  ----  PostgreSQL / JSONB
 
 该开关只选择浏览器打开的目标，并不会自动建立反向代理、端口转发或公网访问。真实图标发现始终使用条目的 `url`；内网服务未单独填写地址的 HTTP 健康检查也使用内网 `url`，不受浏览器模式影响。如果页面声明外部 CDN favicon，符合安全限制的公网 HTTPS 图标也由服务端代理获取。互联网入口应优先使用 HTTPS，并在反向代理或身份代理层配置认证与访问控制。
 
-## 本地开发
-
-建议使用当前 Node.js LTS。仓库声明的最低版本是 Node.js 18.18，但该版本已经停止维护，新环境建议使用 Node.js 24。
-
-```bash
-npm install
-npm run dev
-```
-
-开发服务器：
-
-- 前端：`http://localhost:5173`
-- API：`http://localhost:3000`
-- 健康检查：`http://localhost:3000/api/health`
-
-构建与启动生产版本：
-
-```bash
-npm run build
-npm start
-```
-
 ## Docker 快速启动
 
-正式部署使用 PostgreSQL，推荐通过只读秘密文件提供连接串，并使用版本标签替代 `latest` 以便回滚：
+### 前置条件
+
+- Docker Engine 与 Docker Compose v2。
+- 一个已经创建好数据库和账号的 PostgreSQL 实例；仓库的 Compose **不会自动创建数据库容器**。
+- NAS 或 Linux 主机可以访问 `ghcr.io` 和该 PostgreSQL 实例。
+
+推荐通过只读秘密文件提供数据库连接串，并在稳定部署中使用版本标签替代 `latest` 以便回滚：
 
 ```bash
 cp .env.example .env
@@ -73,7 +97,13 @@ docker compose -f docker-compose.yml -f docker-compose.database-file.yml up -d
 docker compose -f docker-compose.yml -f docker-compose.database-file.yml ps
 ```
 
-秘密文件内容是一行 PostgreSQL URI，例如 `postgresql://dashboard:password@postgres:5432/home_server_dashboard`。也可在 `.env` 中设置 `DATABASE_URL`，但环境变量会显示在容器检查信息中，安全性低于只读文件。不要同时设置 `DATABASE_URL` 与 `DATABASE_URL_FILE`。
+`secrets/database_url` 只包含一行 PostgreSQL URI，例如：
+
+```text
+postgresql://dashboard:password@postgres:5432/home_server_dashboard
+```
+
+也可在 `.env` 中设置 `DATABASE_URL`，但环境变量会显示在容器检查信息中，安全性低于只读文件。不要同时设置 `DATABASE_URL` 与 `DATABASE_URL_FILE`。
 
 打开 `http://NAS-IP:3000`。默认 Compose 会：
 
@@ -95,6 +125,15 @@ DASHBOARD_IMAGE=home-server-dashboard:local docker compose up -d
 
 群晖完整步骤见 [docs/synology.md](docs/synology.md)，配置格式与环境变量见 [docs/configuration.md](docs/configuration.md)。
 
+### 可选 Compose 组件
+
+| 文件 | 用途 | 风险或前提 |
+| --- | --- | --- |
+| `docker-compose.database-file.yml` | 以只读文件注入 PostgreSQL URI | 推荐生产环境使用 |
+| `docker-compose.synology-storage.yml` | 同时采集 `/volume1`、`/volume2`、`/volume3` | 挂载路径需要在 NAS 上存在 |
+| `docker-compose.ikuai.yml` | 以只读文件注入 iKuai API Token | 路由器需提供 v4 监控 API |
+| `docker-compose.socket.yml` | 读取 Docker 容器列表 | Docker Socket 等价于高权限接口，启用前阅读下方安全说明 |
+
 有多个群晖存储空间时，同时加入可选覆盖文件（默认采集 `/volume1`、`/volume2` 和 `/volume3`）：
 
 ```bash
@@ -103,6 +142,36 @@ docker compose \
   -f docker-compose.database-file.yml \
   -f docker-compose.synology-storage.yml \
   up -d
+```
+
+## 本地开发
+
+建议使用当前 Node.js LTS。仓库声明的最低版本是 Node.js 18.18，但该版本已经停止维护，新环境建议使用 Node.js 24。
+
+```bash
+npm install
+npm run dev
+```
+
+开发服务器：
+
+- 前端：`http://localhost:5173`
+- API：`http://localhost:3000`
+- 健康检查：`http://localhost:3000/api/health`
+
+提交前建议执行完整校验：
+
+```bash
+npm test
+npm run lint
+npm run build
+```
+
+构建与启动生产版本：
+
+```bash
+npm run build
+npm start
 ```
 
 ## iKuai 动态拓扑（可选）
@@ -170,4 +239,3 @@ docker compose \
 ## License
 
 [MIT](LICENSE)
-
