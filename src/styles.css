@@ -3285,6 +3285,43 @@ a {
   background: #46525a;
 }
 
+.topology-children.is-container-grid {
+  min-width: 0;
+  grid-auto-flow: row;
+  gap: 12px;
+  padding: 29px 12px 12px;
+  background: #0f1316cc;
+  border: 1px solid #2d353a;
+  border-radius: 4px;
+}
+
+.topology-children.is-container-grid.columns-1 {
+  grid-template-columns: 168px;
+}
+
+.topology-children.is-container-grid.columns-2 {
+  grid-template-columns: repeat(2, 168px);
+}
+
+.topology-children.is-container-grid.columns-3 {
+  grid-template-columns: repeat(3, 168px);
+}
+
+.topology-children.is-container-grid::before,
+.topology-children.is-container-grid > .topology-subtree::before {
+  display: none;
+}
+
+.topology-child-group-label {
+  position: absolute;
+  top: 7px;
+  left: 12px;
+  color: var(--text-muted);
+  font-family: var(--mono);
+  font-size: 8px;
+  letter-spacing: 0;
+}
+
 .topology-branch-empty {
   min-height: 60px;
   display: grid;
@@ -4526,6 +4563,22 @@ a {
     margin: 18px 0 0 28px;
     padding: 0 0 0 18px;
     border-left: 1px solid #46525a;
+  }
+
+  .topology-children.is-container-grid {
+    width: calc(100% - 28px);
+    display: flex;
+    gap: 10px;
+    padding: 30px 10px 10px;
+    border-left: 1px solid #2d353a;
+  }
+
+  .topology-children.is-container-grid::after {
+    left: -1px;
+    width: calc(50% + 15px);
+    background: none;
+    border-right: 1px solid #46525a;
+    border-bottom: 1px solid #46525a;
   }
 
   .topology-children::before {
