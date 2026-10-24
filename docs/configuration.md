@@ -180,13 +180,13 @@ TCP 检查：
 | --- | --- | --- |
 | `source` | `manual` \| `ikuai` | `manual` 仅按服务目录生成结构；`ikuai` 额外从服务端配置的 iKuai v4 API 获取路由状态与宿主详情 |
 | `refreshInterval` | integer | iKuai 拓扑刷新间隔，单位毫秒，允许 `5000` 到 `300000` |
-| `hosts` | array | 宿主及工作负载关联列表；可配置任意数量的虚拟化平台或 Docker 宿主 |
+| `hosts` | array | 宿主及直接工作负载关联列表；可配置任意数量和任意深度的虚拟化平台或 Docker 宿主 |
 | `nodes` | array | 兼容旧版导入的手工节点数据；服务目录拓扑不依赖该数组 |
 | `links` | array | 兼容旧版导入的手工链路数据；服务目录拓扑不依赖该数组 |
 
-`hosts[]` 中每项包含宿主的 `serviceId`、节点样式 `nodeType`（`server` 或 `nas`）和工作负载 ID 数组 `serviceIds`。宿主必须是 `scope: internal`、`runtime: infrastructure` 的服务；工作负载必须是内网的 `runtime: vm/docker` 服务。一个宿主和一个工作负载最多各出现一次，保存时会过滤无效或重复关联。未分配的虚拟机与 Docker 应用不会隐藏，而是分别进入“未分配虚拟机”和“未分配 Docker 应用”分支。
+`hosts[]` 中每项包含宿主的 `serviceId`、节点样式 `nodeType`（`server` 或 `nas`）和直接工作负载 ID 数组 `serviceIds`。宿主必须是内网的 `runtime: infrastructure` 或 `runtime: vm` 服务；工作负载必须是内网的 `runtime: vm/docker` 服务。VM 可以同时作为上一级宿主的工作负载和下一级宿主，例如 `ESXi -> fnOS -> Docker 应用`。同一个宿主只能配置一次，每个工作负载最多有一个直接父宿主；保存时会过滤无效、重复、自关联和循环关系。未分配且没有作为宿主的虚拟机与 Docker 应用不会隐藏，而是分别进入“未分配虚拟机”和“未分配 Docker 应用”分支。
 
-拓扑按 `Internet -> iKuai -> 配置的宿主 -> 工作负载` 生成，不限制宿主厂商、平台类型或数量。外网书签、未分配基础设施和其他 iKuai 终端不会显示。
+拓扑按 `Internet -> iKuai -> 根宿主 -> 子宿主或工作负载` 递归生成，不限制层级深度、宿主厂商、平台类型或数量。外网书签、未分配基础设施和其他 iKuai 终端不会显示。
 
 在“系统设置 > 拓扑数据源”选择 iKuai 并保存后，拓扑页会按刷新间隔请求服务端。服务端使用 iKuai 的系统信息、下游设备、在线终端和物理接口补充路由吞吐及所选宿主的详情，不会把 Token 交给浏览器。iKuai 没有配置、Token 失效、接口不可达或响应异常时，页面会标记数据源不可用，并继续根据已登记服务生成相同的宿主结构，不会回退到旧版 `topology.nodes` 手工画布。
 

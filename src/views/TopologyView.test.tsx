@@ -297,7 +297,7 @@ describe('TopologyView', () => {
     await waitFor(() => expect(refreshButton.querySelector('svg')).not.toHaveClass('spin'));
   });
 
-  it('ignores invalid host references while keeping the referenced VM as one leaf', async () => {
+  it('accepts a VM host while filtering its self-reference', async () => {
     render(
       <TopologyView
         topology={{
@@ -315,9 +315,31 @@ describe('TopologyView', () => {
 
     await waitFor(() => expect(screen.getByText('服务目录拓扑')).toBeInTheDocument());
     expect(screen.getAllByRole('button', { name: /iStoreOS/ })).toHaveLength(1);
-    expect(screen.getByRole('button', { name: /未分配虚拟机/ })).toBeInTheDocument();
     expect(screen.getByRole('button', { name: /未分配 Docker 应用/ })).toBeInTheDocument();
     expect(screen.queryByText('Alibaba Cloud')).not.toBeInTheDocument();
+  });
+
+  it('renders Docker apps below a nested VM host', async () => {
+    render(
+      <TopologyView
+        topology={{
+          ...manualTopology,
+          hosts: [
+            { serviceId: 'vmware-esxi', nodeType: 'server', serviceIds: ['istoreos'] },
+            { serviceId: 'istoreos', nodeType: 'server', serviceIds: ['qinglong'] },
+          ],
+        }}
+        services={services}
+        health={[]}
+        networkMode="internal"
+      />,
+    );
+
+    await waitFor(() => expect(screen.getByText('服务目录拓扑')).toBeInTheDocument());
+    const vmHost = screen.getByRole('button', { name: /iStoreOS/ });
+    const dockerApp = screen.getByRole('button', { name: /Qinglong/ });
+    expect(vmHost.closest('.topology-subtree')).toContainElement(dockerApp);
+    expect(screen.getAllByRole('button', { name: /iStoreOS/ })).toHaveLength(1);
   });
 
   it('does not attach a duplicated host service to both branches', async () => {

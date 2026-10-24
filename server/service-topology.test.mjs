@@ -77,6 +77,53 @@ describe('projectServiceTopology', () => {
     expect(result.nodes.find((node) => node.type === 'router')).toMatchObject({ status: 'unknown' });
   });
 
+  it('projects VM hosts and their Docker apps as a recursive tree', () => {
+    const result = projectServiceTopology({
+      services,
+      topology: {
+        hosts: [
+          { serviceId: 'proxmox-a', nodeType: 'server', serviceIds: ['vm-a', 'vm-b'] },
+          { serviceId: 'vm-a', nodeType: 'nas', serviceIds: ['app-a'] },
+          { serviceId: 'vm-b', nodeType: 'server', serviceIds: ['app-b'] },
+        ],
+      },
+    });
+
+    expect(result.nodes.filter((node) => node.serviceId === 'vm-a')).toEqual([
+      expect.objectContaining({ id: 'service-topology-host-vm-a', type: 'vm' }),
+    ]);
+    expect(result.links).toEqual(expect.arrayContaining([
+      { source: 'service-topology-host-proxmox-a', target: 'service-topology-host-vm-a' },
+      { source: 'service-topology-host-vm-a', target: 'service-topology-service-app-a' },
+      { source: 'service-topology-host-proxmox-a', target: 'service-topology-host-vm-b' },
+      { source: 'service-topology-host-vm-b', target: 'service-topology-service-app-b' },
+    ]));
+    expect(result.nodes.filter((node) => node.serviceId === 'app-a')).toHaveLength(1);
+    expect(result.nodes.filter((node) => node.serviceId === 'app-b')).toHaveLength(1);
+  });
+
+  it('defensively removes cyclic VM host relationships', () => {
+    const result = projectServiceTopology({
+      services,
+      topology: {
+        hosts: [
+          { serviceId: 'vm-a', nodeType: 'server', serviceIds: ['vm-b'] },
+          { serviceId: 'vm-b', nodeType: 'server', serviceIds: ['vm-a', 'app-a'] },
+        ],
+      },
+    });
+
+    expect(result.links).toEqual(expect.arrayContaining([
+      { source: 'service-topology-router', target: 'service-topology-host-vm-a', label: 'LAN' },
+      { source: 'service-topology-host-vm-a', target: 'service-topology-host-vm-b' },
+      { source: 'service-topology-host-vm-b', target: 'service-topology-service-app-a' },
+    ]));
+    expect(result.links).not.toContainEqual({
+      source: 'service-topology-host-vm-b',
+      target: 'service-topology-host-vm-a',
+    });
+  });
+
   it('ignores invalid and duplicate associations without duplicating or hiding workloads', () => {
     const result = projectServiceTopology({
       services,

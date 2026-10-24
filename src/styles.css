@@ -3087,8 +3087,8 @@ a {
 
 .managed-topology {
   position: relative;
-  width: 100%;
-  min-width: 760px;
+  width: max-content;
+  min-width: 100%;
   min-height: 100%;
   padding: 30px 34px 46px;
 }
@@ -3175,13 +3175,14 @@ a {
 
 .topology-branches {
   display: grid;
-  grid-auto-columns: minmax(260px, 1fr);
+  grid-auto-columns: max-content;
   grid-auto-flow: column;
+  justify-content: center;
 }
 
 .topology-branch {
   position: relative;
-  min-width: 0;
+  min-width: 260px;
   padding: 16px 28px 32px;
 }
 
@@ -3229,38 +3230,58 @@ a {
   font-weight: 650;
 }
 
-.topology-branch > .topology-tree-node {
-  margin: 0 auto;
-}
-
-.topology-branch-line {
-  width: 1px;
-  height: 36px;
-  display: block;
-  margin: 0 auto;
-  background: #52616a;
-}
-
-.topology-leaf-grid {
+.topology-subtree {
   position: relative;
+  width: max-content;
+  min-width: 168px;
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(152px, 1fr));
+  justify-items: center;
+}
+
+.topology-branch > .topology-subtree {
+  margin: 0 auto;
+}
+
+.topology-children {
+  position: relative;
+  width: max-content;
+  min-width: 100%;
+  display: grid;
+  align-items: start;
+  grid-auto-columns: minmax(168px, 1fr);
+  grid-auto-flow: column;
   gap: 20px 12px;
-  padding-top: 22px;
-  border-top: 1px solid #46525a;
+  margin-top: 18px;
+  padding-top: 18px;
 }
 
-.topology-leaf-grid > .topology-tree-node {
-  width: 100%;
+.topology-children::before {
+  content: "";
+  position: absolute;
+  top: 0;
+  right: min(84px, 50%);
+  left: min(84px, 50%);
+  height: 1px;
+  background: #46525a;
 }
 
-.topology-leaf-grid > .topology-tree-node::before {
+.topology-children::after {
   content: "";
   position: absolute;
   bottom: 100%;
   left: 50%;
   width: 1px;
-  height: 23px;
+  height: 18px;
+  background: #46525a;
+}
+
+.topology-children > .topology-subtree::before {
+  content: "";
+  position: absolute;
+  bottom: 100%;
+  left: 50%;
+  width: 1px;
+  height: 18px;
   background: #46525a;
 }
 
@@ -3447,6 +3468,15 @@ a {
 .topology-workload-grid label:has(input:checked) {
   background: var(--accent-dim);
   border-color: #526326;
+}
+
+.topology-workload-grid label.is-disabled {
+  cursor: not-allowed;
+  opacity: 0.48;
+}
+
+.topology-workload-grid label.is-disabled input {
+  cursor: not-allowed;
 }
 
 .topology-workload-grid input {
@@ -4454,6 +4484,7 @@ a {
   }
 
   .managed-topology {
+    width: 100%;
     min-width: 0;
     padding: 24px 14px 38px;
   }
@@ -4471,6 +4502,7 @@ a {
   }
 
   .topology-branch {
+    min-width: 0;
     padding: 18px 8px 24px;
     border-top: 1px solid #2d353a;
   }
@@ -4484,8 +4516,43 @@ a {
     height: 74px;
   }
 
-  .topology-leaf-grid {
-    grid-template-columns: repeat(2, minmax(0, 1fr));
+  .topology-children {
+    width: calc(100% - 28px);
+    min-width: 0;
+    display: flex;
+    align-items: stretch;
+    flex-direction: column;
+    gap: 18px;
+    margin: 18px 0 0 28px;
+    padding: 0 0 0 18px;
+    border-left: 1px solid #46525a;
+  }
+
+  .topology-children::before {
+    display: none;
+  }
+
+  .topology-children::after {
+    bottom: 100%;
+    left: -1px;
+    width: calc(50% + 15px);
+    height: 18px;
+    background: none;
+    border-right: 1px solid #46525a;
+    border-bottom: 1px solid #46525a;
+  }
+
+  .topology-subtree {
+    width: 100%;
+    min-width: 0;
+  }
+
+  .topology-children > .topology-subtree::before {
+    top: 29px;
+    bottom: auto;
+    left: -18px;
+    width: calc(50% + 18px);
+    height: 1px;
   }
 
   .topology-workspace.has-inspector {
@@ -4560,10 +4627,6 @@ a {
 }
 
 @media (max-width: 560px) {
-  .topology-leaf-grid {
-    grid-template-columns: 1fr;
-  }
-
   .topbar-title {
     gap: 8px;
   }
@@ -4666,10 +4729,6 @@ a {
 
   .topology-summary {
     display: none;
-  }
-
-  .topology-leaf-grid {
-    grid-template-columns: 1fr;
   }
 
   .overview-heading h2 {

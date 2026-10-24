@@ -78,101 +78,142 @@ function legacyHosts(topology, workloads) {
   ];
 }
 
-function configuredBranches(topology, hostServiceById, workloadServiceById) {
+function createsCycle(hostId, childId, childrenByHost) {
+  const pending = [childId];
+  const visited = new Set();
+  while (pending.length > 0) {
+    const current = pending.pop();
+    if (current === hostId) return true;
+    if (visited.has(current)) continue;
+    visited.add(current);
+    pending.push(...(childrenByHost.get(current) ?? []));
+  }
+  return false;
+}
+
+function configuredTrees(topology, hostServiceById, workloadServiceById) {
   const workloads = [...workloadServiceById.values()];
   const requestedHosts = Array.isArray(topology.hosts)
     ? topology.hosts
     : legacyHosts(topology, workloads);
-  const claimedHosts = new Set();
-  const claimedWorkloads = new Set();
-  const branches = [];
+  const hostConfigs = new Map();
 
   for (const configuredHost of requestedHosts) {
-    const hostService = hostServiceById.get(configuredHost?.serviceId);
-    if (!hostService || claimedHosts.has(hostService.id)) continue;
-    claimedHosts.add(hostService.id);
-    const services = (Array.isArray(configuredHost.serviceIds) ? configuredHost.serviceIds : [])
-      .flatMap((serviceId) => {
-        const service = workloadServiceById.get(serviceId);
-        if (!service || claimedWorkloads.has(service.id)) return [];
-        claimedWorkloads.add(service.id);
-        return [service];
-      });
-    branches.push({
-      id: hostNodeId(hostService),
-      label: hostService.name,
+    const service = hostServiceById.get(configuredHost?.serviceId);
+    if (!service || hostConfigs.has(service.id)) continue;
+    hostConfigs.set(service.id, {
+      isHost: true,
+      service,
       nodeType: configuredHost.nodeType === 'nas' ? 'nas' : 'server',
-      service: hostService,
-      services,
+      requestedServiceIds: Array.isArray(configuredHost.serviceIds) ? configuredHost.serviceIds : [],
     });
   }
 
-  const unassigned = workloads.filter((service) => !claimedWorkloads.has(service.id));
+  const childrenByHost = new Map([...hostConfigs].map(([serviceId]) => [serviceId, []]));
+  const claimedWorkloads = new Set();
+  for (const [hostId, host] of hostConfigs) {
+    for (const serviceId of host.requestedServiceIds) {
+      if (
+        serviceId === hostId
+        || !workloadServiceById.has(serviceId)
+        || claimedWorkloads.has(serviceId)
+        || createsCycle(hostId, serviceId, childrenByHost)
+      ) continue;
+      claimedWorkloads.add(serviceId);
+      childrenByHost.get(hostId).push(serviceId);
+    }
+  }
+
+  const buildHostTree = (hostId) => {
+    const host = hostConfigs.get(hostId);
+    return {
+      isHost: true,
+      id: hostNodeId(host.service),
+      label: host.service.name,
+      nodeType: host.service.runtime === 'vm' ? 'vm' : host.nodeType,
+      service: host.service,
+      children: childrenByHost.get(hostId).map((serviceId) => (
+        hostConfigs.has(serviceId)
+          ? buildHostTree(serviceId)
+          : {
+              isHost: false,
+              id: serviceNodeId(workloadServiceById.get(serviceId)),
+              service: workloadServiceById.get(serviceId),
+              children: [],
+            }
+      )),
+    };
+  };
+
+  const trees = [...hostConfigs.keys()]
+    .filter((serviceId) => !claimedWorkloads.has(serviceId))
+    .map(buildHostTree);
+  const configuredHostIds = new Set(hostConfigs.keys());
+  const unassigned = workloads.filter((service) => (
+    !claimedWorkloads.has(service.id) && !configuredHostIds.has(service.id)
+  ));
   for (const runtime of ['vm', 'docker']) {
     const services = unassigned.filter((service) => service.runtime === runtime);
     if (services.length === 0) continue;
-    branches.push({
+    trees.push({
+      isHost: true,
       id: `service-topology-unassigned-${runtime}`,
       label: runtime === 'vm' ? '未分配虚拟机' : '未分配 Docker 应用',
       nodeType: 'server',
-      services,
+      children: services.map((service) => ({
+        isHost: false,
+        id: serviceNodeId(service),
+        service,
+        children: [],
+      })),
     });
   }
 
-  return branches;
+  return trees;
 }
 
-function hostNode(branch, x, rawNodes, claimedNodeIds) {
-  if (!branch.service) {
-    return {
-      id: branch.id,
-      label: branch.label,
-      type: branch.nodeType,
-      x,
-      y: 51,
-    };
+function hostNode(tree, x, y, rawNodes, claimedNodeIds) {
+  if (!tree.service) {
+    return { id: tree.id, label: tree.label, type: tree.nodeType, x, y };
   }
-  const details = findHostDetails(branch.service, rawNodes, claimedNodeIds);
+  const details = findHostDetails(tree.service, rawNodes, claimedNodeIds);
   if (details?.id) claimedNodeIds.add(details.id);
-  const hostname = urlHostname(branch.service.url);
+  const hostname = urlHostname(tree.service.url);
   return {
     ...(details || {}),
-    id: branch.id,
-    label: branch.label,
-    type: branch.nodeType,
-    serviceId: branch.service.id,
+    id: tree.id,
+    label: tree.label,
+    type: tree.nodeType,
+    serviceId: tree.service.id,
     x,
-    y: 51,
+    y,
     ...(!details?.ipAddress && isIP(hostname) ? { ipAddress: hostname } : {}),
   };
 }
 
-function leafNodes(services, minimumX, maximumX) {
-  const leafPositions = positions(services.length, minimumX, maximumX);
-  return services.map((service, index) => {
-    const hostname = urlHostname(service.url);
-    return {
-      id: serviceNodeId(service),
-      label: service.name,
-      type: service.runtime === 'vm' ? 'vm' : 'container',
-      serviceId: service.id,
-      x: leafPositions[index],
-      y: 81,
-      ...(isIP(hostname) ? { ipAddress: hostname } : {}),
-    };
-  });
+function workloadNode(tree, x, y) {
+  const hostname = urlHostname(tree.service.url);
+  return {
+    id: tree.id,
+    label: tree.service.name,
+    type: tree.service.runtime === 'vm' ? 'vm' : 'container',
+    serviceId: tree.service.id,
+    x,
+    y,
+    ...(isIP(hostname) ? { ipAddress: hostname } : {}),
+  };
 }
 
 export function projectServiceTopology({ services = [], topology = {}, snapshot = {} } = {}) {
   const rawNodes = Array.isArray(snapshot?.nodes) ? snapshot.nodes : [];
   const internalServices = services.filter((service) => service?.scope !== 'external');
   const hostServiceById = new Map(internalServices
-    .filter((service) => (service.runtime ?? 'infrastructure') === 'infrastructure')
+    .filter((service) => ['infrastructure', 'vm'].includes(service.runtime ?? 'infrastructure'))
     .map((service) => [service.id, service]));
   const workloadServiceById = new Map(internalServices
     .filter((service) => ['vm', 'docker'].includes(service.runtime))
     .map((service) => [service.id, service]));
-  const branches = configuredBranches(topology, hostServiceById, workloadServiceById);
+  const trees = configuredTrees(topology, hostServiceById, workloadServiceById);
   const claimedNodeIds = new Set();
   const internet = rootNode(rawNodes, 'internet', {
     id: 'service-topology-internet',
@@ -185,18 +226,41 @@ export function projectServiceTopology({ services = [], topology = {}, snapshot 
   });
   const nodes = [internet, router];
   const links = [{ source: internet.id, target: router.id, label: 'WAN' }];
-  const branchPositions = positions(branches.length, 8, 92);
-  const branchWidth = branches.length > 0 ? 84 / branches.length : 84;
+  const rootPositions = positions(trees.length, 8, 92);
+  const rootWidth = trees.length > 0 ? 84 / trees.length : 84;
 
-  branches.forEach((branch, index) => {
-    const x = branchPositions[index];
-    const host = hostNode(branch, x, rawNodes, claimedNodeIds);
-    const minimumX = Math.max(4, x - branchWidth * 0.42);
-    const maximumX = Math.min(96, x + branchWidth * 0.42);
-    const leaves = leafNodes(branch.services, minimumX, maximumX);
-    nodes.push(host, ...leaves);
-    links.push({ source: router.id, target: host.id, label: 'LAN' });
-    links.push(...leaves.map((leaf) => ({ source: host.id, target: leaf.id })));
+  const projectTree = (tree, parentId, minimumX, maximumX, depth) => {
+    const x = (minimumX + maximumX) / 2;
+    const y = Math.min(92, 51 + depth * 20);
+    const node = tree.isHost
+      ? hostNode(tree, x, y, rawNodes, claimedNodeIds)
+      : workloadNode(tree, x, y);
+    nodes.push(node);
+    links.push({ source: parentId, target: node.id, ...(depth === 0 ? { label: 'LAN' } : {}) });
+    if (tree.children.length === 0) return;
+    const childPositions = positions(tree.children.length, minimumX, maximumX);
+    const childWidth = (maximumX - minimumX) / Math.max(1, tree.children.length);
+    tree.children.forEach((child, index) => {
+      const childX = childPositions[index];
+      projectTree(
+        child,
+        node.id,
+        Math.max(2, childX - childWidth * 0.44),
+        Math.min(98, childX + childWidth * 0.44),
+        depth + 1,
+      );
+    });
+  };
+
+  trees.forEach((tree, index) => {
+    const x = rootPositions[index];
+    projectTree(
+      tree,
+      router.id,
+      Math.max(4, x - rootWidth * 0.42),
+      Math.min(96, x + rootWidth * 0.42),
+      0,
+    );
   });
 
   return {

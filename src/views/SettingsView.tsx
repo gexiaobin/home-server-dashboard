@@ -87,7 +87,7 @@ export function SettingsView({ config, detectedHostname, saving, onSave }: Setti
   }
 
   const hostServices = config.services.filter((service) => (
-    service.scope === 'internal' && service.runtime === 'infrastructure'
+    service.scope === 'internal' && (service.runtime === 'infrastructure' || service.runtime === 'vm')
   ));
   const workloadServices = config.services.filter((service) => (
     service.scope === 'internal' && (service.runtime === 'vm' || service.runtime === 'docker')
@@ -95,7 +95,26 @@ export function SettingsView({ config, detectedHostname, saving, onSave }: Setti
   const selectedHostServiceIds = new Set(topologyDraft.hosts.map((host) => host.serviceId));
   const availableHostServices = hostServices.filter((service) => !selectedHostServiceIds.has(service.id));
   const assignedServiceIds = new Set(topologyDraft.hosts.flatMap((host) => host.serviceIds));
-  const unassignedWorkloadCount = workloadServices.filter((service) => !assignedServiceIds.has(service.id)).length;
+  const unassignedWorkloadCount = workloadServices.filter((service) => (
+    !assignedServiceIds.has(service.id) && !selectedHostServiceIds.has(service.id)
+  )).length;
+
+  function createsCycle(hostServiceId: string, childServiceId: string) {
+    const childrenByHost = new Map(topologyDraft.hosts.map((host) => [
+      host.serviceId,
+      host.serviceIds.filter((id) => id !== childServiceId),
+    ]));
+    const pending = [childServiceId];
+    const visited = new Set<string>();
+    while (pending.length > 0) {
+      const current = pending.pop();
+      if (current === hostServiceId) return true;
+      if (!current || visited.has(current)) continue;
+      visited.add(current);
+      pending.push(...(childrenByHost.get(current) ?? []));
+    }
+    return false;
+  }
 
   function addHost() {
     const service = availableHostServices[0];
@@ -110,7 +129,15 @@ export function SettingsView({ config, detectedHostname, saving, onSave }: Setti
     setTopologyDraft({
       ...topologyDraft,
       hosts: topologyDraft.hosts.map((host, hostIndex) => (
-        hostIndex === index ? { ...host, ...patch } : host
+        hostIndex === index
+          ? {
+              ...host,
+              ...patch,
+              serviceIds: patch.serviceId
+                ? host.serviceIds.filter((id) => id !== patch.serviceId)
+                : host.serviceIds,
+            }
+          : host
       )),
     });
   }
@@ -183,7 +210,7 @@ export function SettingsView({ config, detectedHostname, saving, onSave }: Setti
         <div className="settings-section-copy">
           <span className="panel-kicker">NETWORK MAP</span>
           <h2>拓扑数据源</h2>
-          <p>配置实时数据源，并按实际环境添加任意数量的虚拟化、容器或通用宿主。</p>
+          <p>配置实时数据源，并按实际环境建立虚拟化平台、虚拟机宿主与 Docker 应用的多级关系。</p>
         </div>
         <form className="settings-form" onSubmit={saveTopology}>
           <label className="field">
@@ -220,7 +247,7 @@ export function SettingsView({ config, detectedHostname, saving, onSave }: Setti
           <div className="topology-host-manager settings-field-wide">
             <div className="topology-host-manager-header">
               <div>
-                <strong>宿主与工作负载</strong>
+                <strong>宿主与工作负载层级</strong>
                 <span>{topologyDraft.hosts.length} 个宿主 · {unassignedWorkloadCount} 个服务未分配</span>
               </div>
               <button
@@ -236,15 +263,19 @@ export function SettingsView({ config, detectedHostname, saving, onSave }: Setti
               <div className="topology-host-empty">
                 {hostServices.length > 0
                   ? '尚未配置宿主。未分配的虚拟机和 Docker 应用仍会显示在通用分支中。'
-                  : '请先在服务中心添加运行环境为“基础设施”的内网服务。'}
+                  : '请先在服务中心添加运行环境为“基础设施”或“虚拟机”的内网服务。'}
               </div>
             ) : (
               <div className="topology-host-list">
                 {topologyDraft.hosts.map((host, index) => {
                   const selectedService = hostServices.find((service) => service.id === host.serviceId);
+                  const parentHost = topologyDraft.hosts.find((candidate) => candidate.serviceIds.includes(host.serviceId));
+                  const parentService = parentHost
+                    ? hostServices.find((service) => service.id === parentHost.serviceId)
+                    : undefined;
                   return (
                     <fieldset className="topology-host-editor" key={host.serviceId}>
-                      <legend>宿主 {index + 1}</legend>
+                      <legend>宿主 {index + 1}{parentService ? ` · ${parentService.name} 下级` : ' · 根级'}</legend>
                       <div className="topology-host-fields">
                         <label className="field">
                           <span>关联服务</span>
@@ -266,14 +297,20 @@ export function SettingsView({ config, detectedHostname, saving, onSave }: Setti
                         </label>
                         <label className="field">
                           <span>节点样式</span>
-                          <select
-                            aria-label={`宿主 ${index + 1} 节点样式`}
-                            value={host.nodeType}
-                            onChange={(event) => updateHost(index, { nodeType: event.target.value as TopologyHost['nodeType'] })}
-                          >
-                            <option value="server">服务器</option>
-                            <option value="nas">NAS</option>
-                          </select>
+                          {selectedService?.runtime === 'vm' ? (
+                            <select aria-label={`宿主 ${index + 1} 节点样式`} value="vm" disabled>
+                              <option value="vm">虚拟机（自动）</option>
+                            </select>
+                          ) : (
+                            <select
+                              aria-label={`宿主 ${index + 1} 节点样式`}
+                              value={host.nodeType}
+                              onChange={(event) => updateHost(index, { nodeType: event.target.value as TopologyHost['nodeType'] })}
+                            >
+                              <option value="server">服务器</option>
+                              <option value="nas">NAS</option>
+                            </select>
+                          )}
                         </label>
                         <button
                           className="icon-button subtle topology-host-remove"
@@ -289,16 +326,22 @@ export function SettingsView({ config, detectedHostname, saving, onSave }: Setti
                         <span>承载服务</span>
                         {workloadServices.length > 0 ? (
                           <div className="topology-workload-grid">
-                            {workloadServices.map((service) => (
-                              <label key={service.id}>
+                            {workloadServices.map((service) => {
+                              const checked = host.serviceIds.includes(service.id);
+                              const cycle = service.id === host.serviceId || createsCycle(host.serviceId, service.id);
+                              const isNestedHost = selectedHostServiceIds.has(service.id);
+                              return (
+                              <label key={service.id} className={cycle && !checked ? 'is-disabled' : ''}>
                                 <input
                                   type="checkbox"
-                                  checked={host.serviceIds.includes(service.id)}
+                                  checked={checked}
+                                  disabled={cycle && !checked}
                                   onChange={(event) => assignService(index, service.id, event.target.checked)}
                                 />
-                                <span>{service.name}<small>{service.runtime === 'vm' ? '虚拟机' : 'Docker 应用'}</small></span>
+                                <span>{service.name}<small>{service.runtime === 'vm' ? (isNestedHost ? '虚拟机 · 下级宿主' : '虚拟机') : 'Docker 应用'}</small></span>
                               </label>
-                            ))}
+                              );
+                            })}
                           </div>
                         ) : (
                           <small>服务中心暂无虚拟机或 Docker 应用。</small>

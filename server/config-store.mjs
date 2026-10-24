@@ -278,7 +278,9 @@ export function normalizeConfig(defaults, config) {
     return normalized;
   });
   const hostServiceIds = new Set(services
-    .filter((service) => service.scope === 'internal' && service.runtime === 'infrastructure')
+    .filter((service) => (
+      service.scope === 'internal' && ['infrastructure', 'vm'].includes(service.runtime)
+    ))
     .map((service) => service.id));
   const workloadServices = services.filter((service) => (
     service.scope === 'internal' && ['vm', 'docker'].includes(service.runtime)
@@ -315,6 +317,19 @@ export function normalizeConfig(defaults, config) {
         : legacyHosts(topologyDefaults);
   const claimedHostServiceIds = new Set();
   const claimedWorkloadServiceIds = new Set();
+  const childServiceIdsByHost = new Map();
+  const createsCycle = (hostServiceId, childServiceId) => {
+    const pending = [childServiceId];
+    const visited = new Set();
+    while (pending.length > 0) {
+      const current = pending.pop();
+      if (current === hostServiceId) return true;
+      if (visited.has(current)) continue;
+      visited.add(current);
+      pending.push(...(childServiceIdsByHost.get(current) ?? []));
+    }
+    return false;
+  };
   const hosts = clone(requestedHosts).flatMap((host) => {
     const serviceId = typeof host?.serviceId === 'string' ? host.serviceId.trim() : '';
     if (!hostServiceIds.has(serviceId) || claimedHostServiceIds.has(serviceId)) return [];
@@ -322,10 +337,16 @@ export function normalizeConfig(defaults, config) {
     const serviceIds = (Array.isArray(host.serviceIds) ? host.serviceIds : [])
       .map((id) => typeof id === 'string' ? id.trim() : '')
       .filter((id) => {
-        if (!workloadServiceIds.has(id) || claimedWorkloadServiceIds.has(id)) return false;
+        if (
+          id === serviceId
+          || !workloadServiceIds.has(id)
+          || claimedWorkloadServiceIds.has(id)
+          || createsCycle(serviceId, id)
+        ) return false;
         claimedWorkloadServiceIds.add(id);
         return true;
       });
+    childServiceIdsByHost.set(serviceId, serviceIds);
     return [{
       serviceId,
       nodeType: ['server', 'nas'].includes(host.nodeType) ? host.nodeType : 'server',

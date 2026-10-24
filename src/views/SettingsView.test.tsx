@@ -43,6 +43,7 @@ const hostSelectionConfig: AppConfig = {
     service({ id: 'esxi', name: 'VMware ESXi', url: 'https://esxi.home.arpa', scope: 'internal', runtime: 'infrastructure' }),
     service({ id: 'synology', name: 'Synology DSM', url: 'https://nas.home.arpa:5001', scope: 'internal', runtime: 'infrastructure' }),
     service({ id: 'vm', name: 'iStoreOS', url: 'http://vm.home.arpa', scope: 'internal', runtime: 'vm' }),
+    service({ id: 'fnos', name: 'fnOS', url: 'http://fnos.home.arpa', scope: 'internal', runtime: 'vm' }),
     service({ id: 'docker', name: 'Immich', url: 'http://docker.home.arpa', scope: 'internal', runtime: 'docker' }),
     service({ id: 'cloud', name: 'Alibaba Cloud', url: 'https://cloud.example.com', scope: 'external', runtime: 'infrastructure' }),
   ],
@@ -116,10 +117,10 @@ describe('SettingsView', () => {
 
     const firstHostSelect = screen.getByRole('combobox', { name: '宿主 1 关联服务' }) as HTMLSelectElement;
     const secondHostSelect = screen.getByRole('combobox', { name: '宿主 2 关联服务' }) as HTMLSelectElement;
-    expect(Array.from(firstHostSelect.options).map((option) => option.value)).toEqual(['esxi', 'synology']);
+    expect(Array.from(firstHostSelect.options).map((option) => option.value)).toEqual(['esxi', 'synology', 'vm', 'fnos']);
     expect(Array.from(firstHostSelect.options).find((option) => option.value === 'synology')).toBeDisabled();
     expect(Array.from(secondHostSelect.options).find((option) => option.value === 'esxi')).toBeDisabled();
-    expect(screen.getByRole('button', { name: '添加宿主' })).toBeDisabled();
+    expect(screen.getByRole('button', { name: '添加宿主' })).toBeEnabled();
 
     fireEvent.change(screen.getByRole('combobox', { name: '宿主 2 节点样式' }), { target: { value: 'nas' } });
     fireEvent.click(screen.getAllByRole('checkbox', { name: /iStoreOS/ })[0]);
@@ -136,5 +137,37 @@ describe('SettingsView', () => {
         ],
       },
     }));
+  });
+
+  it('shows nested VM hosts and disables relationships that would create a cycle', () => {
+    const nestedConfig: AppConfig = {
+      ...hostSelectionConfig,
+      topology: {
+        ...hostSelectionConfig.topology,
+        hosts: [
+          { serviceId: 'esxi', nodeType: 'server', serviceIds: ['vm'] },
+          { serviceId: 'vm', nodeType: 'server', serviceIds: ['fnos'] },
+          { serviceId: 'fnos', nodeType: 'server', serviceIds: ['docker'] },
+        ],
+      },
+    };
+
+    render(
+      <SettingsView
+        config={nestedConfig}
+        saving={false}
+        onSave={vi.fn(async () => undefined)}
+      />,
+    );
+
+    expect(screen.getByText('宿主 2 · VMware ESXi 下级')).toBeInTheDocument();
+    expect(screen.getByText('宿主 3 · iStoreOS 下级')).toBeInTheDocument();
+    expect(screen.getByRole('combobox', { name: '宿主 2 节点样式' })).toBeDisabled();
+    const fnosHostWorkloads = screen.getByText('宿主 3 · iStoreOS 下级')
+      .closest('fieldset')
+      ?.querySelectorAll<HTMLInputElement>('input[type="checkbox"]');
+    const istoreosCheckbox = Array.from(fnosHostWorkloads ?? [])
+      .find((checkbox) => checkbox.parentElement?.textContent?.includes('iStoreOS'));
+    expect(istoreosCheckbox).toBeDisabled();
   });
 });

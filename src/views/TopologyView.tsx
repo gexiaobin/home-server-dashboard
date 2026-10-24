@@ -53,97 +53,114 @@ function serviceHostname(service?: Service): string | undefined {
   }
 }
 
-function distributedPositions(count: number, minimum: number, maximum: number): number[] {
-  if (count <= 0) return [];
-  if (count === 1) return [(minimum + maximum) / 2];
-  const step = (maximum - minimum) / (count - 1);
-  return Array.from({ length: count }, (_, index) => minimum + step * index);
-}
-
-interface ManagedBranch {
-  id: string;
-  label: string;
-  type: 'server' | 'nas';
-  service?: Service;
-  children: Service[];
+interface TopologyTree {
+  node: TopologyNode;
+  children: TopologyTree[];
 }
 
 function managedFallback(topology: AppConfig['topology'], services: Service[], message?: string): TopologySnapshot {
   const internal = services.filter((service) => service.scope !== 'external');
-  const infrastructure = internal.filter((service) => service.runtime === 'infrastructure');
+  const hostCandidates = internal.filter((service) => service.runtime === 'infrastructure' || service.runtime === 'vm');
   const workloads = internal.filter((service) => service.runtime === 'vm' || service.runtime === 'docker');
-  const infrastructureMap = new Map(infrastructure.map((service) => [service.id, service]));
+  const hostCandidateMap = new Map(hostCandidates.map((service) => [service.id, service]));
   const workloadMap = new Map(workloads.map((service) => [service.id, service]));
-  const assignedHostIds = new Set<string>();
-  const assignedIds = new Set<string>();
-  const branches: ManagedBranch[] = (topology.hosts ?? []).flatMap((host) => {
-    const service = infrastructureMap.get(host.serviceId);
-    if (!service || assignedHostIds.has(service.id)) return [];
-    assignedHostIds.add(service.id);
-    const children = host.serviceIds.flatMap((serviceId) => {
-      const child = workloadMap.get(serviceId);
-      if (!child || assignedIds.has(child.id)) return [];
-      assignedIds.add(child.id);
-      return [child];
-    });
-    return [{
-      id: `managed-host-${service.id}`,
-      label: service.name,
-      type: host.nodeType,
-      service,
-      children,
-    }];
-  });
-  for (const runtime of ['vm', 'docker'] as const) {
-    const children = workloads.filter((service) => service.runtime === runtime && !assignedIds.has(service.id));
-    if (children.length === 0) continue;
-    branches.push({
-      id: `managed-unassigned-${runtime}`,
-      label: runtime === 'vm' ? '未分配虚拟机' : '未分配 Docker 应用',
-      type: 'server',
-      service: undefined,
-      children,
-    });
+  const hostConfigs = new Map<string, { service: Service; nodeType: 'server' | 'nas'; serviceIds: string[] }>();
+  for (const host of topology.hosts ?? []) {
+    const service = hostCandidateMap.get(host.serviceId);
+    if (!service || hostConfigs.has(service.id)) continue;
+    hostConfigs.set(service.id, { service, nodeType: host.nodeType, serviceIds: host.serviceIds });
   }
-  const branchPositions = distributedPositions(branches.length, 8, 92);
-  const branchWidth = branches.length > 0 ? 84 / branches.length : 84;
+
+  const childrenByHost = new Map([...hostConfigs.keys()].map((id) => [id, [] as string[]]));
+  const assignedIds = new Set<string>();
+  const createsCycle = (hostId: string, childId: string) => {
+    const pending = [childId];
+    const visited = new Set<string>();
+    while (pending.length > 0) {
+      const current = pending.pop();
+      if (current === hostId) return true;
+      if (!current || visited.has(current)) continue;
+      visited.add(current);
+      pending.push(...(childrenByHost.get(current) ?? []));
+    }
+    return false;
+  };
+  for (const [hostId, host] of hostConfigs) {
+    for (const serviceId of host.serviceIds) {
+      if (
+        serviceId === hostId
+        || !workloadMap.has(serviceId)
+        || assignedIds.has(serviceId)
+        || createsCycle(hostId, serviceId)
+      ) continue;
+      assignedIds.add(serviceId);
+      childrenByHost.get(hostId)?.push(serviceId);
+    }
+  }
+
   const nodes: TopologyNode[] = [
     { id: 'managed-internet', label: 'Internet', type: 'internet', status: 'up', x: 50, y: 7 },
-    {
-      id: 'managed-router',
-      label: 'iKuai',
-      type: 'router',
-      status: 'unknown',
-      x: 50,
-      y: 24,
-    },
-    ...branches.flatMap((branch, index) => {
-      const x = branchPositions[index];
-      const minimumX = Math.max(4, x - branchWidth * 0.42);
-      const maximumX = Math.min(96, x + branchWidth * 0.42);
-      const childPositions = distributedPositions(branch.children.length, minimumX, maximumX);
-      return [
-        {
-          id: branch.id,
-          label: branch.label,
-          type: branch.type,
-          serviceId: branch.service?.id,
-          ipAddress: serviceHostname(branch.service),
-          x,
-          y: 49,
-        },
-        ...branch.children.map((service, childIndex) => ({
-          id: `managed-service-${service.id}`,
-          label: service.name,
-          type: service.runtime === 'vm' ? 'vm' as const : 'container' as const,
-          serviceId: service.id,
-          ipAddress: serviceHostname(service),
-          x: childPositions[childIndex],
-          y: 80,
-        })),
-      ];
-    }),
+    { id: 'managed-router', label: 'iKuai', type: 'router', status: 'unknown', x: 50, y: 24 },
   ];
+  const links: TopologySnapshot['links'] = [
+    { source: 'managed-internet', target: 'managed-router', label: 'WAN' },
+  ];
+  const hostNodeId = (serviceId: string) => `managed-host-${serviceId}`;
+  const serviceNodeId = (serviceId: string) => `managed-service-${serviceId}`;
+
+  const addServiceTree = (serviceId: string, parentId: string, depth: number) => {
+    const service = workloadMap.get(serviceId);
+    if (!service) return;
+    const configuredHost = hostConfigs.get(serviceId);
+    const nodeId = configuredHost ? hostNodeId(serviceId) : serviceNodeId(serviceId);
+    nodes.push({
+      id: nodeId,
+      label: service.name,
+      type: configuredHost ? 'vm' : service.runtime === 'vm' ? 'vm' : 'container',
+      serviceId: service.id,
+      ipAddress: serviceHostname(service),
+      x: 50,
+      y: Math.min(92, 49 + depth * 20),
+    });
+    links.push({ source: parentId, target: nodeId });
+    for (const childId of childrenByHost.get(serviceId) ?? []) {
+      addServiceTree(childId, nodeId, depth + 1);
+    }
+  };
+
+  for (const [hostId, host] of hostConfigs) {
+    if (assignedIds.has(hostId)) continue;
+    const nodeId = hostNodeId(hostId);
+    nodes.push({
+      id: nodeId,
+      label: host.service.name,
+      type: host.service.runtime === 'vm' ? 'vm' : host.nodeType,
+      serviceId: host.service.id,
+      ipAddress: serviceHostname(host.service),
+      x: 50,
+      y: 49,
+    });
+    links.push({ source: 'managed-router', target: nodeId, label: 'LAN' });
+    for (const childId of childrenByHost.get(hostId) ?? []) addServiceTree(childId, nodeId, 1);
+  }
+
+  const configuredHostIds = new Set(hostConfigs.keys());
+  for (const runtime of ['vm', 'docker'] as const) {
+    const children = workloads.filter((service) => (
+      service.runtime === runtime && !assignedIds.has(service.id) && !configuredHostIds.has(service.id)
+    ));
+    if (children.length === 0) continue;
+    const branchId = `managed-unassigned-${runtime}`;
+    nodes.push({
+      id: branchId,
+      label: runtime === 'vm' ? '未分配虚拟机' : '未分配 Docker 应用',
+      type: 'server',
+      x: 50,
+      y: 49,
+    });
+    links.push({ source: 'managed-router', target: branchId, label: 'LAN' });
+    for (const service of children) addServiceTree(service.id, branchId, 1);
+  }
   return {
     requestedSource: topology.source,
     source: 'manual',
@@ -151,14 +168,53 @@ function managedFallback(topology: AppConfig['topology'], services: Service[], m
     message,
     updatedAt: null,
     nodes,
-    links: [
-      { source: 'managed-internet', target: 'managed-router', label: 'WAN' },
-      ...branches.flatMap((branch) => [
-        { source: 'managed-router', target: branch.id, label: 'LAN' },
-        ...branch.children.map((service) => ({ source: branch.id, target: `managed-service-${service.id}` })),
-      ]),
-    ],
+    links,
   };
+}
+
+function snapshotTrees(snapshot: TopologySnapshot, routerNode?: TopologyNode): TopologyTree[] {
+  const nodeMap = new Map(snapshot.nodes.map((node) => [node.id, node]));
+  const childrenById = new Map<string, string[]>();
+  for (const link of snapshot.links) {
+    if (!nodeMap.has(link.source) || !nodeMap.has(link.target)) continue;
+    const children = childrenById.get(link.source) ?? [];
+    if (!children.includes(link.target)) children.push(link.target);
+    childrenById.set(link.source, children);
+  }
+
+  const buildTree = (nodeId: string, ancestors = new Set<string>()): TopologyTree | null => {
+    const node = nodeMap.get(nodeId);
+    if (!node || ancestors.has(nodeId)) return null;
+    const nextAncestors = new Set(ancestors).add(nodeId);
+    return {
+      node,
+      children: (childrenById.get(nodeId) ?? [])
+        .map((childId) => buildTree(childId, nextAncestors))
+        .filter((child): child is TopologyTree => child !== null),
+    };
+  };
+
+  const linkedRoots = routerNode ? childrenById.get(routerNode.id) ?? [] : [];
+  if (linkedRoots.length > 0) {
+    return linkedRoots
+      .map((nodeId) => buildTree(nodeId))
+      .filter((tree): tree is TopologyTree => tree !== null);
+  }
+
+  // Older server snapshots had coordinates but no links.
+  const hosts = snapshot.nodes.filter((node) => node.type === 'server' || node.type === 'nas');
+  const workloads = snapshot.nodes.filter((node) => node.type === 'vm' || node.type === 'container');
+  return hosts.map((host) => {
+    const nearestHost = (node: TopologyNode) => hosts.reduce((nearest, candidate) => (
+      Math.abs(candidate.x - node.x) < Math.abs(nearest.x - node.x) ? candidate : nearest
+    ), hosts[0]);
+    return {
+      node: host,
+      children: workloads
+        .filter((node) => nearestHost(node)?.id === host.id)
+        .map((node) => ({ node, children: [] })),
+    };
+  });
 }
 
 function nodeStatus(node: TopologyNode, statusMap: Map<string, ServiceHealth>): ServiceStatus {
@@ -215,21 +271,7 @@ export function TopologyView({ topology, services, health, networkMode }: Topolo
   const routerNode = snapshot.nodes.find((node) => node.type === 'router');
   const vmNodes = snapshot.nodes.filter((node) => node.type === 'vm');
   const dockerNodes = snapshot.nodes.filter((node) => node.type === 'container');
-  const workloadNodes = [...vmNodes, ...dockerNodes];
-  const hostNodes = snapshot.nodes.filter((node) => node.type === 'server' || node.type === 'nas');
-  const branches = hostNodes.map((host) => {
-    const linkedIds = new Set(snapshot.links
-      .filter((link) => link.source === host.id)
-      .map((link) => link.target));
-    const linkedWorkloads = workloadNodes.filter((node) => linkedIds.has(node.id));
-    if (linkedWorkloads.length > 0 || snapshot.links.length > 0) {
-      return { host, workloads: linkedWorkloads };
-    }
-    const nearestHost = (node: TopologyNode) => hostNodes.reduce((nearest, candidate) => (
-      Math.abs(candidate.x - node.x) < Math.abs(nearest.x - node.x) ? candidate : nearest
-    ), hostNodes[0]);
-    return { host, workloads: workloadNodes.filter((node) => nearestHost(node)?.id === host.id) };
-  });
+  const trees = useMemo(() => snapshotTrees(snapshot, routerNode), [routerNode, snapshot]);
   const selectedNode = selectedId ? nodeMap.get(selectedId) : undefined;
   const selectedService = selectedNode?.serviceId ? serviceMap.get(selectedNode.serviceId) : undefined;
   const selectedServiceUrl = selectedService ? getServiceUrl(selectedService, networkMode) : null;
@@ -295,6 +337,21 @@ export function TopologyView({ topology, services, health, networkMode }: Topolo
     />
   );
 
+  const descendantCount = (tree: TopologyTree): number => (
+    tree.children.reduce((total, child) => total + 1 + descendantCount(child), 0)
+  );
+
+  const renderTree = (tree: TopologyTree) => (
+    <div className="topology-subtree" key={tree.node.id}>
+      {renderNode(tree.node)}
+      {tree.children.length > 0 && (
+        <div className="topology-children">
+          {tree.children.map(renderTree)}
+        </div>
+      )}
+    </div>
+  );
+
   return (
     <div className="topology-view">
       <div className="topology-toolbar">
@@ -341,23 +398,17 @@ export function TopologyView({ topology, services, health, networkMode }: Topolo
                 {routerNode && renderNode(routerNode)}
               </div>
 
-              {branches.length > 0 ? (
+              {trees.length > 0 ? (
                 <>
                   <div className="topology-fork" aria-hidden="true"><span /></div>
                   <div className="topology-branches">
-                    {branches.map(({ host, workloads: branchWorkloads }) => (
-                      <section className="topology-branch" aria-labelledby={`branch-title-${host.id}`} key={host.id}>
+                    {trees.map((tree) => (
+                      <section className="topology-branch" aria-labelledby={`branch-title-${tree.node.id}`} key={tree.node.id}>
                         <div className="topology-branch-heading">
                           <span className="panel-kicker">HOST / 宿主</span>
-                          <strong id={`branch-title-${host.id}`}>{host.label} <b>{branchWorkloads.length}</b></strong>
+                          <strong id={`branch-title-${tree.node.id}`}>{tree.node.label} <b>{descendantCount(tree)}</b></strong>
                         </div>
-                        {renderNode(host)}
-                        <span className="topology-branch-line" aria-hidden="true" />
-                        {branchWorkloads.length > 0 ? (
-                          <div className="topology-leaf-grid">{branchWorkloads.map(renderNode)}</div>
-                        ) : (
-                          <div className="topology-branch-empty">暂无已分配服务</div>
-                        )}
+                        {renderTree(tree)}
                       </section>
                     ))}
                   </div>

@@ -470,7 +470,11 @@ describe('ConfigStore', () => {
       defaultsFile: path.join(dataDir, 'missing-defaults.json'),
     });
 
-    await expect(store.get()).resolves.toMatchObject({ topology: { hosts: [] } });
+    await expect(store.get()).resolves.toMatchObject({
+      topology: {
+        hosts: [{ serviceId: 'vm', nodeType: 'server', serviceIds: [] }],
+      },
+    });
 
     const duplicate = await store.put({
       services,
@@ -483,6 +487,51 @@ describe('ConfigStore', () => {
     });
     expect(duplicate.topology.hosts).toEqual([
       { serviceId: 'host', nodeType: 'server', serviceIds: ['vm'] },
+    ]);
+  });
+
+  it('supports nested VM hosts and removes self-references and cycles', async () => {
+    const dataDir = await createTemporaryDirectory();
+    const store = new ConfigStore({
+      dataDir,
+      defaultsFile: path.join(dataDir, 'missing-defaults.json'),
+    });
+    const services = [
+      { id: 'esxi', name: 'ESXi', url: 'https://esxi.home.arpa', scope: 'internal', runtime: 'infrastructure' },
+      { id: 'fnos', name: 'fnOS', url: 'http://fnos.home.arpa', scope: 'internal', runtime: 'vm' },
+      { id: 'istoreos', name: 'iStoreOS', url: 'http://istoreos.home.arpa', scope: 'internal', runtime: 'vm' },
+      { id: 'app', name: 'Docker app', url: 'http://app.home.arpa', scope: 'internal', runtime: 'docker' },
+    ];
+
+    const saved = await store.put({
+      services,
+      topology: {
+        hosts: [
+          { serviceId: 'esxi', nodeType: 'server', serviceIds: ['fnos', 'istoreos'] },
+          { serviceId: 'fnos', nodeType: 'nas', serviceIds: ['app', 'fnos'] },
+          { serviceId: 'istoreos', nodeType: 'server', serviceIds: ['fnos'] },
+        ],
+      },
+    });
+
+    expect(saved.topology.hosts).toEqual([
+      { serviceId: 'esxi', nodeType: 'server', serviceIds: ['fnos', 'istoreos'] },
+      { serviceId: 'fnos', nodeType: 'nas', serviceIds: ['app'] },
+      { serviceId: 'istoreos', nodeType: 'server', serviceIds: [] },
+    ]);
+
+    const cycle = await store.put({
+      services,
+      topology: {
+        hosts: [
+          { serviceId: 'fnos', nodeType: 'server', serviceIds: ['istoreos'] },
+          { serviceId: 'istoreos', nodeType: 'server', serviceIds: ['fnos', 'app'] },
+        ],
+      },
+    });
+    expect(cycle.topology.hosts).toEqual([
+      { serviceId: 'fnos', nodeType: 'server', serviceIds: ['istoreos'] },
+      { serviceId: 'istoreos', nodeType: 'server', serviceIds: ['app'] },
     ]);
   });
 
