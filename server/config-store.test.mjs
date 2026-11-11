@@ -112,6 +112,26 @@ describe('ConfigStore', () => {
     expect(onDisk.services[0].externalUrl).toBe(config.services[0].externalUrl);
   });
 
+  it('serializes writes and rejects a stale file revision', async () => {
+    const dataDir = await createTemporaryDirectory();
+    const store = new ConfigStore({
+      dataDir,
+      defaults: DEFAULT_CONFIG,
+      defaultsFile: path.join(dataDir, 'missing-defaults.json'),
+    });
+    const initial = await store.getWithRevision();
+    const first = await store.putWithRevision({
+      ...initial.config,
+      settings: { ...initial.config.settings, title: 'First writer' },
+    }, { expectedRevision: initial.revision });
+
+    await expect(store.putWithRevision({
+      ...initial.config,
+      settings: { ...initial.config.settings, title: 'Stale writer' },
+    }, { expectedRevision: initial.revision })).rejects.toMatchObject({ statusCode: 409 });
+    await expect(store.get()).resolves.toEqual(first.config);
+  });
+
   it('normalizes legacy services without an external URL', async () => {
     const dataDir = await createTemporaryDirectory();
     await mkdir(dataDir, { recursive: true });

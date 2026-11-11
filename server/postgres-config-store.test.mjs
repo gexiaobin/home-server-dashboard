@@ -19,22 +19,38 @@ async function createTemporaryDirectory() {
 
 function createPool(initialDocument = null) {
   let document = structuredClone(initialDocument);
+  let revision = document ? 1 : 0;
   const query = vi.fn(async (sql, parameters = []) => {
     const statement = sql.replace(/\s+/g, ' ').trim();
-    if (statement.startsWith('CREATE TABLE')) {
+    if (statement.startsWith('CREATE TABLE') || statement.startsWith('ALTER TABLE')) {
       return { rows: [] };
     }
     if (statement.startsWith('SELECT id')) {
       return { rows: document ? [{ id: 1 }] : [] };
     }
     if (statement.startsWith('SELECT document')) {
-      return { rows: document ? [{ document: structuredClone(document) }] : [] };
+      return { rows: document ? [{ document: structuredClone(document), revision }] : [] };
     }
     if (statement.startsWith('INSERT INTO')) {
-      if (!document || statement.includes('DO UPDATE')) {
+      const existed = Boolean(document);
+      if (!existed || statement.includes('DO UPDATE')) {
         document = JSON.parse(parameters[0]);
+        revision = existed ? revision + 1 : 1;
       }
-      return { rows: statement.includes('RETURNING document') ? [{ document: structuredClone(document) }] : [] };
+      const changed = !existed || statement.includes('DO UPDATE');
+      return {
+        rows: statement.includes('RETURNING document') && changed
+          ? [{ document: structuredClone(document), revision }]
+          : [],
+      };
+    }
+    if (statement.startsWith('UPDATE')) {
+      if (!document || String(revision) !== String(parameters[1])) {
+        return { rows: [] };
+      }
+      document = JSON.parse(parameters[0]);
+      revision += 1;
+      return { rows: [{ document: structuredClone(document), revision }] };
     }
     if (statement === 'SELECT 1') {
       return { rows: [{ value: 1 }] };
@@ -44,6 +60,7 @@ function createPool(initialDocument = null) {
   return {
     query,
     readDocument: () => structuredClone(document),
+    readRevision: () => revision,
   };
 }
 
@@ -99,6 +116,25 @@ describe('PostgresConfigStore', () => {
     });
     expect((await store.get()).services[0].externalUrl).toBe(input.services[0].externalUrl);
     expect(pool.readDocument().services[0].externalUrl).toBe(input.services[0].externalUrl);
+  });
+
+  it('rejects a stale revision without modifying PostgreSQL', async () => {
+    const dataDir = await createTemporaryDirectory();
+    const pool = createPool({ settings: { title: 'Current', refreshInterval: 5000 } });
+    const store = createStore(pool, dataDir);
+    const initial = await store.getWithRevision();
+
+    const saved = await store.putWithRevision({
+      ...initial.config,
+      settings: { ...initial.config.settings, title: 'First writer' },
+    }, { expectedRevision: initial.revision });
+
+    await expect(store.putWithRevision({
+      ...initial.config,
+      settings: { ...initial.config.settings, title: 'Stale writer' },
+    }, { expectedRevision: initial.revision })).rejects.toMatchObject({ statusCode: 409 });
+    expect(pool.readDocument().settings.title).toBe('First writer');
+    expect(pool.readRevision()).toBe(Number(saved.revision));
   });
 
   it('does not store iKuai deployment secrets inside PostgreSQL JSONB', async () => {

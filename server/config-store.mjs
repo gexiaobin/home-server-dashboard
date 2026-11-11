@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto';
 import { promises as fs } from 'node:fs';
 import path from 'node:path';
 
@@ -28,8 +29,20 @@ export class ConfigValidationError extends Error {
   }
 }
 
+export class ConfigConflictError extends Error {
+  constructor(message = 'Config has changed since it was loaded') {
+    super(message);
+    this.name = 'ConfigConflictError';
+    this.statusCode = 409;
+  }
+}
+
 function clone(value) {
   return JSON.parse(JSON.stringify(value));
+}
+
+function contentRevision(config) {
+  return createHash('sha256').update(JSON.stringify(config)).digest('hex');
 }
 
 function isObject(value) {
@@ -416,7 +429,7 @@ export class ConfigStore {
     return clone(await this.loadedDefaults);
   }
 
-  async get() {
+  async readCurrent() {
     const defaults = await this.getDefaults();
     try {
       const raw = await this.fs.readFile(this.filePath, 'utf8');
@@ -436,12 +449,28 @@ export class ConfigStore {
     }
   }
 
-  async put(config) {
+  async getWithRevision() {
+    await this.writeQueue;
+    const config = await this.readCurrent();
+    return { config, revision: contentRevision(config) };
+  }
+
+  async get() {
+    return (await this.getWithRevision()).config;
+  }
+
+  async putWithRevision(config, { expectedRevision } = {}) {
     validateConfig(config);
     const defaults = await this.getDefaults();
     const normalized = normalizeConfig(defaults, config);
 
     const write = async () => {
+      if (expectedRevision !== undefined) {
+        const current = await this.readCurrent();
+        if (contentRevision(current) !== expectedRevision) {
+          throw new ConfigConflictError();
+        }
+      }
       await this.fs.mkdir(this.dataDir, { recursive: true });
       const temporaryPath = `${this.filePath}.${process.pid}.${Date.now()}.tmp`;
       try {
@@ -454,12 +483,17 @@ export class ConfigStore {
         await this.fs.unlink(temporaryPath).catch(() => {});
         throw error;
       }
-      return clone(normalized);
+      const saved = clone(normalized);
+      return { config: saved, revision: contentRevision(saved) };
     };
 
     const result = this.writeQueue.then(write, write);
     this.writeQueue = result.then(() => undefined, () => undefined);
     return result;
+  }
+
+  async put(config, options) {
+    return (await this.putWithRevision(config, options)).config;
   }
 }
 
@@ -535,8 +569,13 @@ export class PostgresConfigStore extends ConfigStore {
           CREATE TABLE IF NOT EXISTS ${CONFIG_TABLE} (
             id smallint PRIMARY KEY CHECK (id = 1),
             document jsonb NOT NULL,
+            revision bigint NOT NULL DEFAULT 1,
             updated_at timestamptz NOT NULL DEFAULT NOW()
           )
+        `);
+        await pool.query(`
+          ALTER TABLE ${CONFIG_TABLE}
+          ADD COLUMN IF NOT EXISTS revision bigint NOT NULL DEFAULT 1
         `);
         await this.migrateLegacyFile(pool);
         return pool;
@@ -575,12 +614,12 @@ export class PostgresConfigStore extends ConfigStore {
     );
   }
 
-  async get() {
+  async getWithRevision() {
     const pool = await this.initialize();
-    const result = await pool.query(`SELECT document FROM ${CONFIG_TABLE} WHERE id = 1`);
+    const result = await pool.query(`SELECT document, revision FROM ${CONFIG_TABLE} WHERE id = 1`);
     const defaults = await this.getDefaults();
     if (result.rows.length === 0) {
-      return normalizeConfig(defaults, {});
+      return { config: normalizeConfig(defaults, {}), revision: '0' };
     }
 
     const document = result.rows[0].document;
@@ -589,21 +628,60 @@ export class PostgresConfigStore extends ConfigStore {
     } catch (error) {
       throw new Error(`Stored PostgreSQL config is invalid: ${error.message}`);
     }
-    return normalizeConfig(defaults, document);
+    return {
+      config: normalizeConfig(defaults, document),
+      revision: String(result.rows[0].revision),
+    };
   }
 
-  async put(config) {
+  async get() {
+    return (await this.getWithRevision()).config;
+  }
+
+  async putWithRevision(config, { expectedRevision } = {}) {
     validateConfig(config);
     const normalized = normalizeConfig(await this.getDefaults(), config);
     const pool = await this.initialize();
-    const result = await pool.query(`
-      INSERT INTO ${CONFIG_TABLE} (id, document, updated_at)
-      VALUES (1, $1::jsonb, NOW())
-      ON CONFLICT (id) DO UPDATE
-      SET document = EXCLUDED.document, updated_at = NOW()
-      RETURNING document
-    `, [JSON.stringify(normalized)]);
-    return clone(result.rows[0].document);
+    let result;
+    if (expectedRevision === undefined) {
+      result = await pool.query(`
+        INSERT INTO ${CONFIG_TABLE} (id, document, revision, updated_at)
+        VALUES (1, $1::jsonb, 1, NOW())
+        ON CONFLICT (id) DO UPDATE
+        SET document = EXCLUDED.document,
+            revision = ${CONFIG_TABLE}.revision + 1,
+            updated_at = NOW()
+        RETURNING document, revision
+      `, [JSON.stringify(normalized)]);
+    } else if (expectedRevision === '0') {
+      result = await pool.query(`
+        INSERT INTO ${CONFIG_TABLE} (id, document, revision, updated_at)
+        VALUES (1, $1::jsonb, 1, NOW())
+        ON CONFLICT (id) DO NOTHING
+        RETURNING document, revision
+      `, [JSON.stringify(normalized)]);
+    } else {
+      if (!/^\d+$/.test(expectedRevision)) {
+        throw new ConfigConflictError();
+      }
+      result = await pool.query(`
+        UPDATE ${CONFIG_TABLE}
+        SET document = $1::jsonb, revision = revision + 1, updated_at = NOW()
+        WHERE id = 1 AND revision = $2::bigint
+        RETURNING document, revision
+      `, [JSON.stringify(normalized), expectedRevision]);
+    }
+    if (result.rows.length === 0) {
+      throw new ConfigConflictError();
+    }
+    return {
+      config: clone(result.rows[0].document),
+      revision: String(result.rows[0].revision),
+    };
+  }
+
+  async put(config, options) {
+    return (await this.putWithRevision(config, options)).config;
   }
 
   async healthCheck() {

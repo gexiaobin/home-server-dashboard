@@ -9,6 +9,7 @@ import { fileURLToPath, pathToFileURL } from 'node:url';
 import express from 'express';
 
 import {
+  ConfigConflictError,
   ConfigStore,
   ConfigValidationError,
   PostgresConfigStore,
@@ -20,6 +21,44 @@ import { projectServiceTopology } from './service-topology.mjs';
 
 const SERVER_DIR = path.dirname(fileURLToPath(import.meta.url));
 const PROJECT_DIR = path.resolve(SERVER_DIR, '..');
+
+function fallbackRevision(config) {
+  return createHash('sha256').update(JSON.stringify(config)).digest('hex');
+}
+
+function configEtag(revision) {
+  return `\"config-${revision}\"`;
+}
+
+function revisionFromEtag(value) {
+  const match = typeof value === 'string' && value.trim().match(/^\"config-([^\"]+)\"$/);
+  if (!match) {
+    const error = new Error('If-Match must contain the latest config ETag');
+    error.statusCode = 400;
+    throw error;
+  }
+  return match[1];
+}
+
+async function getConfigSnapshot(configStore) {
+  if (typeof configStore.getWithRevision === 'function') {
+    return configStore.getWithRevision();
+  }
+  const config = await configStore.get();
+  return { config, revision: fallbackRevision(config) };
+}
+
+async function putConfigSnapshot(configStore, config, expectedRevision) {
+  if (typeof configStore.putWithRevision === 'function') {
+    return configStore.putWithRevision(config, { expectedRevision });
+  }
+  const current = await configStore.get();
+  if (fallbackRevision(current) !== expectedRevision) {
+    throw new ConfigConflictError();
+  }
+  const saved = await configStore.put(config);
+  return { config: saved, revision: fallbackRevision(saved) };
+}
 
 function asyncRoute(handler) {
   return (request, response, next) => {
@@ -368,11 +407,20 @@ export function createApp({
   app.use(createBasicAuthMiddleware(credentials));
 
   app.get('/api/config', asyncRoute(async (_request, response) => {
-    response.json(await configStore.get());
+    const snapshot = await getConfigSnapshot(configStore);
+    response.set('ETag', configEtag(snapshot.revision));
+    response.json(snapshot.config);
   }));
 
   app.put('/api/config', asyncRoute(async (request, response) => {
-    response.json(await configStore.put(request.body));
+    const ifMatch = request.get('if-match');
+    if (!ifMatch) {
+      response.status(428).json({ error: 'If-Match is required; reload config before saving' });
+      return;
+    }
+    const snapshot = await putConfigSnapshot(configStore, request.body, revisionFromEtag(ifMatch));
+    response.set('ETag', configEtag(snapshot.revision));
+    response.json(snapshot.config);
   }));
 
   app.get('/api/topology', asyncRoute(async (_request, response) => {

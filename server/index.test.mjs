@@ -289,16 +289,62 @@ describe('createApp', () => {
 
     const getResponse = await fetch(`${baseUrl}/api/config`);
     expect(getResponse.status).toBe(200);
+    const revision = getResponse.headers.get('etag');
+    expect(revision).toMatch(/^\"config-/);
     await expect(readJson(getResponse)).resolves.toEqual(configFixture);
 
     const putResponse = await fetch(`${baseUrl}/api/config`, {
       method: 'PUT',
-      headers: { 'content-type': 'application/json' },
+      headers: { 'content-type': 'application/json', 'if-match': revision },
       body: JSON.stringify(updatedConfig),
     });
     expect(putResponse.status).toBe(200);
     await expect(readJson(putResponse)).resolves.toEqual(updatedConfig);
     expect(dependencies.configStore.put).toHaveBeenCalledWith(updatedConfig);
+  });
+
+  it('requires a config revision before accepting an update', async () => {
+    const dependencies = createDependencies();
+    const baseUrl = await serve(createApp(dependencies));
+
+    const response = await fetch(`${baseUrl}/api/config`, {
+      method: 'PUT',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify(configFixture),
+    });
+
+    expect(response.status).toBe(428);
+    await expect(readJson(response)).resolves.toEqual({
+      error: 'If-Match is required; reload config before saving',
+    });
+    expect(dependencies.configStore.put).not.toHaveBeenCalled();
+  });
+
+  it('rejects a stale config revision without calling put', async () => {
+    const dependencies = createDependencies();
+    const changedConfig = {
+      ...configFixture,
+      services: [...configFixture.services, { id: 'ubuntu', name: 'Ubuntu', url: 'http://ubuntu.local' }],
+    };
+    dependencies.configStore.get
+      .mockResolvedValueOnce(configFixture)
+      .mockResolvedValueOnce(changedConfig);
+    const baseUrl = await serve(createApp(dependencies));
+
+    const getResponse = await fetch(`${baseUrl}/api/config`);
+    const staleRevision = getResponse.headers.get('etag');
+    await readJson(getResponse);
+    const response = await fetch(`${baseUrl}/api/config`, {
+      method: 'PUT',
+      headers: { 'content-type': 'application/json', 'if-match': staleRevision },
+      body: JSON.stringify(configFixture),
+    });
+
+    expect(response.status).toBe(409);
+    await expect(readJson(response)).resolves.toEqual({
+      error: 'Config has changed since it was loaded',
+    });
+    expect(dependencies.configStore.put).not.toHaveBeenCalled();
   });
 
   it('rejects malformed JSON before it reaches the config store', async () => {

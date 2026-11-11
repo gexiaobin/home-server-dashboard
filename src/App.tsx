@@ -1,9 +1,10 @@
 import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { AlertTriangle, LoaderCircle } from 'lucide-react';
-import { api } from './api';
+import { api, ApiError } from './api';
 import { ServiceDialog } from './components/ServiceDialog';
 import { Sidebar, type ViewId } from './components/Sidebar';
 import { Topbar } from './components/Topbar';
+import { applyTheme, getStoredTheme, storeTheme, THEME_STORAGE_KEY, type Theme } from './lib/theme';
 import type { AppConfig, MetricPoint, NetworkMode, Overview, Service } from './types';
 import { OverviewView } from './views/OverviewView';
 import { ServicesView } from './views/ServicesView';
@@ -31,13 +32,16 @@ function viewFromHash(): ViewId {
 export function App() {
   const [view, setView] = useState<ViewId>(viewFromHash);
   const [config, setConfig] = useState<AppConfig | null>(null);
+  const [configRevision, setConfigRevision] = useState('');
   const [overview, setOverview] = useState<Overview | null>(null);
   const [history, setHistory] = useState<MetricPoint[]>([]);
   const [search, setSearch] = useState('');
   const [networkMode, setNetworkMode] = useState<NetworkMode>(storedNetworkMode);
+  const [theme, setTheme] = useState<Theme>(getStoredTheme);
   const [initialLoading, setInitialLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [saving, setSaving] = useState(false);
+  const [settingsRefreshing, setSettingsRefreshing] = useState(() => viewFromHash() === 'settings');
   const [error, setError] = useState('');
   const [toast, setToast] = useState('');
   const [sidebarOpen, setSidebarOpen] = useState(false);
@@ -78,9 +82,10 @@ export function App() {
     let active = true;
     async function bootstrap() {
       try {
-        const nextConfig = await api.getConfig();
+        const snapshot = await api.getConfig();
         if (!active) return;
-        setConfig(nextConfig);
+        setConfig(snapshot.config);
+        setConfigRevision(snapshot.revision);
         await refreshOverview(true);
       } catch (cause) {
         if (active) setError(cause instanceof Error ? cause.message : '无法加载配置');
@@ -93,13 +98,37 @@ export function App() {
   }, [refreshOverview]);
 
   useEffect(() => {
+    if (view !== 'settings' || initialLoading) return;
+    let active = true;
+    setSettingsRefreshing(true);
+    api.getConfig()
+      .then((snapshot) => {
+        if (!active) return;
+        setConfig(snapshot.config);
+        setConfigRevision(snapshot.revision);
+      })
+      .catch((cause) => {
+        if (active) setToast(cause instanceof Error ? cause.message : '无法刷新最新配置');
+      })
+      .finally(() => {
+        if (active) setSettingsRefreshing(false);
+      });
+    return () => { active = false; };
+  }, [view, initialLoading]);
+
+  useEffect(() => {
     if (!config) return;
     const timer = window.setInterval(() => void refreshOverview(true), Math.max(3000, config.settings.refreshInterval));
     return () => window.clearInterval(timer);
   }, [config?.settings.refreshInterval, config, refreshOverview]);
 
   useEffect(() => {
-    function syncHash() { setView(viewFromHash()); setSidebarOpen(false); }
+    function syncHash() {
+      const next = viewFromHash();
+      if (next === 'settings') setSettingsRefreshing(true);
+      setView(next);
+      setSidebarOpen(false);
+    }
     window.addEventListener('hashchange', syncHash);
     return () => window.removeEventListener('hashchange', syncHash);
   }, []);
@@ -111,6 +140,19 @@ export function App() {
     }
     window.addEventListener('storage', syncNetworkMode);
     return () => window.removeEventListener('storage', syncNetworkMode);
+  }, []);
+
+  useEffect(() => {
+    applyTheme(theme);
+  }, [theme]);
+
+  useEffect(() => {
+    function syncTheme(event: StorageEvent) {
+      if (event.key !== THEME_STORAGE_KEY) return;
+      setTheme(event.newValue === 'light' ? 'light' : 'dark');
+    }
+    window.addEventListener('storage', syncTheme);
+    return () => window.removeEventListener('storage', syncTheme);
   }, []);
 
   useEffect(() => {
@@ -136,7 +178,6 @@ export function App() {
 
   function navigate(next: ViewId) {
     window.location.hash = `/${next}`;
-    setView(next);
     setSidebarOpen(false);
   }
 
@@ -149,18 +190,34 @@ export function App() {
     }
   }
 
+  function changeTheme(next: Theme) {
+    setTheme(next);
+    storeTheme(next);
+  }
+
   async function saveConfig(next: AppConfig, message = '设置已保存') {
     setSaving(true);
     try {
-      const saved = await api.saveConfig(next);
-      setConfig(saved);
+      const snapshot = await api.saveConfig(next, configRevision);
+      setConfig(snapshot.config);
+      setConfigRevision(snapshot.revision);
       setToast(message);
       setDialogOpen(false);
       setEditingService(null);
       void refreshOverview(true);
     } catch (cause) {
+      if (cause instanceof ApiError && cause.status === 409) {
+        try {
+          const latest = await api.getConfig();
+          setConfig(latest.config);
+          setConfigRevision(latest.revision);
+          setToast('配置已在其他页面更新，已重新加载最新内容，请再次保存');
+        } catch (reloadCause) {
+          setToast(reloadCause instanceof Error ? reloadCause.message : '配置冲突，重新加载失败');
+        }
+        return;
+      }
       setToast(cause instanceof Error ? cause.message : '保存失败');
-      throw cause;
     } finally {
       setSaving(false);
     }
@@ -244,10 +301,12 @@ export function App() {
           connected={Boolean(overview) && !error}
           lastUpdated={lastUpdated}
           networkMode={networkMode}
+          theme={theme}
           onSearch={setSearch}
           onRefresh={() => void refreshOverview()}
           onOpenMenu={() => setSidebarOpen(true)}
           onNetworkModeChange={changeNetworkMode}
+          onThemeChange={changeTheme}
         />
         {error && (
           <div className="connection-banner" role="alert">
@@ -279,7 +338,13 @@ export function App() {
           <Suspense fallback={<div className="view-loading"><LoaderCircle size={21} className="spin" /><span>加载工作区</span></div>}>
             {view === 'monitor' && <MonitorView overview={overview} history={history} connected={Boolean(overview) && !error} />}
             {view === 'topology' && <TopologyView topology={config.topology} services={config.services} health={overview?.services || []} networkMode={networkMode} />}
-            {view === 'settings' && (
+            {view === 'settings' && settingsRefreshing && (
+              <div className="view-loading settings-loading" role="status">
+                <LoaderCircle size={21} className="spin" />
+                <span>正在读取最新配置</span>
+              </div>
+            )}
+            {view === 'settings' && !settingsRefreshing && (
               <SettingsView
                 config={config}
                 detectedHostname={overview?.system.detectedHostname}

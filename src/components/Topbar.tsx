@@ -1,4 +1,5 @@
-import { ChevronRight, Globe2, House, Menu, RefreshCw, Search, ShieldCheck } from 'lucide-react';
+import { ChevronRight, Globe2, House, Menu, Moon, RefreshCw, Search, ShieldCheck, Sun } from 'lucide-react';
+import type { Theme } from '../lib/theme';
 import type { NetworkMode } from '../types';
 import type { ViewId } from './Sidebar';
 
@@ -8,9 +9,11 @@ interface TopbarProps {
   loading: boolean;
   connected: boolean;
   networkMode: NetworkMode;
+  theme: Theme;
   lastUpdated?: string;
   onSearch: (value: string) => void;
   onNetworkModeChange: (mode: NetworkMode) => void;
+  onThemeChange: (theme: Theme) => void;
   onRefresh: () => void;
   onOpenMenu: () => void;
 }
@@ -29,9 +32,11 @@ export function Topbar({
   loading,
   connected,
   networkMode,
+  theme,
   lastUpdated,
   onSearch,
   onNetworkModeChange,
+  onThemeChange,
   onRefresh,
   onOpenMenu,
 }: TopbarProps) {
@@ -59,6 +64,16 @@ export function Topbar({
             />
           </label>
         )}
+        <button
+          className="icon-button theme-toggle"
+          type="button"
+          aria-label={theme === 'dark' ? '切换为明亮主题' : '切换为暗色主题'}
+          aria-pressed={theme === 'light'}
+          title={theme === 'dark' ? '切换为明亮主题' : '切换为暗色主题'}
+          onClick={() => onThemeChange(theme === 'dark' ? 'light' : 'dark')}
+        >
+          {theme === 'dark' ? <Sun size={17} /> : <Moon size={17} />}
+        </button>
         <div className="network-mode-switch" role="group" aria-label="访问网络">
           <button
             className={networkMode === 'internal' ? 'is-active' : ''}

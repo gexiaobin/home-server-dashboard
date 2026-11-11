@@ -314,24 +314,24 @@ export function MonitorView({ overview, history, connected = true }: MonitorView
               <AreaChart data={history} margin={{ top: 12, right: 8, left: -20, bottom: 0 }}>
                 <defs>
                   <linearGradient id="monitorCpuFill" x1="0" y1="0" x2="0" y2="1">
-                    <stop offset="0%" stopColor="#d7ff43" stopOpacity={0.2} />
-                    <stop offset="100%" stopColor="#d7ff43" stopOpacity={0} />
+                    <stop offset="0%" stopColor="var(--accent)" stopOpacity={0.2} />
+                    <stop offset="100%" stopColor="var(--accent)" stopOpacity={0} />
                   </linearGradient>
                   <linearGradient id="monitorMemoryFill" x1="0" y1="0" x2="0" y2="1">
-                    <stop offset="0%" stopColor="#47d9e6" stopOpacity={0.16} />
-                    <stop offset="100%" stopColor="#47d9e6" stopOpacity={0} />
+                    <stop offset="0%" stopColor="var(--cyan)" stopOpacity={0.16} />
+                    <stop offset="100%" stopColor="var(--cyan)" stopOpacity={0} />
                   </linearGradient>
                 </defs>
-                <CartesianGrid stroke="#252c32" strokeDasharray="3 5" vertical={false} />
-                <XAxis dataKey="time" stroke="#737c7f" tickLine={false} axisLine={false} fontSize={10} minTickGap={36} />
-                <YAxis domain={[0, 100]} ticks={[0, 25, 50, 75, 100]} stroke="#737c7f" tickLine={false} axisLine={false} fontSize={10} tickFormatter={(value) => `${value}%`} />
+                <CartesianGrid stroke="var(--border)" strokeDasharray="3 5" vertical={false} />
+                <XAxis dataKey="time" stroke="var(--text-muted)" tickLine={false} axisLine={false} fontSize={10} minTickGap={36} />
+                <YAxis domain={[0, 100]} ticks={[0, 25, 50, 75, 100]} stroke="var(--text-muted)" tickLine={false} axisLine={false} fontSize={10} tickFormatter={(value) => `${value}%`} />
                 <Tooltip
-                  contentStyle={{ background: '#11151a', border: '1px solid #3b454e', borderRadius: 4, fontSize: 11 }}
-                  labelStyle={{ color: '#b0b8b5' }}
+                  contentStyle={{ background: 'var(--surface-raised)', border: '1px solid var(--border-strong)', borderRadius: 4, fontSize: 11 }}
+                  labelStyle={{ color: 'var(--text-secondary)' }}
                   formatter={(value: number, name: string) => [`${Math.round(value)}%`, name === 'cpu' ? 'CPU' : '内存']}
                 />
-                <Area type="monotone" dataKey="memory" stroke="#47d9e6" strokeWidth={2} fill="url(#monitorMemoryFill)" isAnimationActive={false} />
-                <Area type="monotone" dataKey="cpu" stroke="#d7ff43" strokeWidth={2} fill="url(#monitorCpuFill)" isAnimationActive={false} />
+                <Area type="monotone" dataKey="memory" stroke="var(--cyan)" strokeWidth={2} fill="url(#monitorMemoryFill)" isAnimationActive={false} />
+                <Area type="monotone" dataKey="cpu" stroke="var(--accent)" strokeWidth={2} fill="url(#monitorCpuFill)" isAnimationActive={false} />
               </AreaChart>
             </ResponsiveContainer>
             {history.length < 2 && <span className="monitor-chart-waiting">正在积累趋势样本</span>}
@@ -410,11 +410,11 @@ export function MonitorView({ overview, history, connected = true }: MonitorView
             <ResponsiveContainer width="100%" height="100%">
               <AreaChart data={history} margin={{ top: 8, right: 2, left: 2, bottom: 0 }}>
                 <Tooltip
-                  contentStyle={{ background: '#11151a', border: '1px solid #3b454e', borderRadius: 4, fontSize: 11 }}
+                  contentStyle={{ background: 'var(--surface-raised)', border: '1px solid var(--border-strong)', borderRadius: 4, fontSize: 11 }}
                   formatter={(value: number, name: string) => [`${value.toFixed(2)} MiB/s`, name === 'rx' ? '下载' : '上传']}
                 />
-                <Area type="monotone" dataKey="rx" stroke="#47d9e6" fill="#47d9e619" strokeWidth={2} isAnimationActive={false} />
-                <Area type="monotone" dataKey="tx" stroke="#d7ff43" fill="#d7ff430d" strokeWidth={2} isAnimationActive={false} />
+                <Area type="monotone" dataKey="rx" stroke="var(--cyan)" fill="var(--cyan-chart-fill)" strokeWidth={2} isAnimationActive={false} />
+                <Area type="monotone" dataKey="tx" stroke="var(--accent)" fill="var(--accent-chart-fill)" strokeWidth={2} isAnimationActive={false} />
               </AreaChart>
             </ResponsiveContainer>
           </div>
