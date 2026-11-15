@@ -10,9 +10,12 @@
     "dev:server": "node --watch server/index.mjs",
     "build": "tsc --noEmit && vite build",
     "start": "node server/index.mjs",
-    "test": "vitest run",
+    "test": "vitest run && npm run test:deployment",
+    "test:deployment": "node --test scripts/*.node-test.mjs",
     "test:watch": "vitest",
-    "lint": "eslint . --max-warnings=0"
+    "lint": "eslint . --max-warnings=0",
+    "deploy:inspect": "node scripts/deploy-portainer.mjs --inspect",
+    "deploy:update": "node scripts/deploy-portainer.mjs"
   },
   "engines": {
     "node": ">=18.18"

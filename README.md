@@ -8,7 +8,7 @@
 
 项目采用 React + Express，前端和 API 打包在一个轻量容器中。所有页面内容均可在系统设置中维护，不绑定 ESXi、Synology 或任何特定厂商；其他用户拉取仓库后，可以直接替换成自己的主机、虚拟化平台和服务。
 
-[快速部署](#docker-快速启动) · [拓扑模型](#通用网络拓扑) · [配置说明](docs/configuration.md) · [群晖部署](docs/synology.md) · [安全说明](#安全说明)
+[快速部署](#docker-快速启动) · [拓扑模型](#通用网络拓扑) · [配置说明](docs/configuration.md) · [Portainer 生产发布](docs/PORTAINER.md) · [群晖部署](docs/synology.md) · [安全说明](#安全说明)
 
 ## 页面与能力
 
@@ -86,7 +86,7 @@ Express :3000  ----  PostgreSQL / JSONB
 - 一个已经创建好数据库和账号的 PostgreSQL 实例；仓库的 Compose **不会自动创建数据库容器**。
 - NAS 或 Linux 主机可以访问 `ghcr.io` 和该 PostgreSQL 实例。
 
-推荐通过只读秘密文件提供数据库连接串，并在稳定部署中使用版本标签替代 `latest` 以便回滚：
+推荐通过只读秘密文件提供数据库连接串。生产环境应使用 GHCR registry digest（`@sha256:...`）固定实际镜像，避免标签漂移：
 
 ```bash
 cp .env.example .env
@@ -123,7 +123,7 @@ docker build -t home-server-dashboard:local .
 DASHBOARD_IMAGE=home-server-dashboard:local docker compose up -d
 ```
 
-群晖完整步骤见 [docs/synology.md](docs/synology.md)，配置格式与环境变量见 [docs/configuration.md](docs/configuration.md)。
+群晖手工部署见 [docs/synology.md](docs/synology.md)，Portainer 标准发布与自动回退流程见 [docs/PORTAINER.md](docs/PORTAINER.md)，配置格式与环境变量见 [docs/configuration.md](docs/configuration.md)。
 
 ### 可选 Compose 组件
 
