@@ -11,3 +11,4 @@ secrets/
 coverage/
 playwright-report/
 test-results/
+.data/

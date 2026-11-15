@@ -30,6 +30,19 @@ jobs:
       - name: Check out repository
         uses: actions/checkout@v4
 
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+
+      - name: Verify application and deployment tooling
+        run: |
+          npm ci --no-audit --no-fund
+          npm test
+          npm run lint
+          npm run build
+
       - name: Set up QEMU
         uses: docker/setup-qemu-action@v3
 
@@ -54,7 +67,7 @@ jobs:
             type=ref,event=branch
             type=semver,pattern={{version}}
             type=semver,pattern={{major}}.{{minor}}
-            type=sha,prefix=sha-
+            type=sha,prefix=sha-,format=long
 
       - name: Build and publish image
         uses: docker/build-push-action@v6
